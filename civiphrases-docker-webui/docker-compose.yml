@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  civiphrases-webui:
+    build: .
+    container_name: civiphrases-webui
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # Map output directory to host (adjust path for your Unraid setup)
+      - /mnt/user/appdata/civiphrases:/output
+      # Optional: Map logs directory
+      - /mnt/user/appdata/civiphrases/logs:/app/logs
+    environment:
+      # Default environment variables (can be overridden)
+      - OUT_DIR=/output
+      - TGW_BASE_URL=http://host.docker.internal:5001/v1
+      - TGW_API_KEY=local
+      # Add your Civitai API key here if needed
+      # - CIVITAI_API_KEY=your_api_key_here
+    extra_hosts:
+      # Allow container to access host services (like Text Generation WebUI)
+      - "host.docker.internal:host-gateway"
+    labels:
+      # Unraid template labels
+      - "net.unraid.docker.managed=dockerman"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/civitai.png"
+    networks:
+      - civiphrases-network
+
+networks:
+  civiphrases-network:
+    driver: bridge
+
+# Alternative configuration for Unraid Community Applications
+# Save this as a separate file: civiphrases-unraid.xml
+# <?xml version="1.0"?>
+# <Container version="2">
+#   <Name>Civiphrases-WebUI</Name>
+#   <Repository>civiphrases-webui:latest</Repository>
+#   <Registry>local</Registry>
+#   <Network>bridge</Network>
+#   <Privileged>false</Privileged>
+#   <Support>https://github.com/your-repo/civiphrases</Support>
+#   <Project>https://github.com/your-repo/civiphrases</Project>
+#   <Overview>Web UI for Civiphrases - Generate ComfyUI wildcards from Civitai prompts</Overview>
+#   <Category>Productivity:</Category>
+#   <WebUI>http://[IP]:[PORT:5000]</WebUI>
+#   <Icon>https://raw.githubusercontent.com/selfhosters/unRAID-CA-templates/master/templates/img/civitai.png</Icon>
+#   <Config Name="WebUI Port" Target="5000" Default="5000" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">5000</Config>
+#   <Config Name="Output Directory" Target="/output" Default="/mnt/user/appdata/civiphrases" Mode="rw" Description="Directory where wildcard files will be saved" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/civiphrases</Config>
+#   <Config Name="TGW Base URL" Target="TGW_BASE_URL" Default="http://host.docker.internal:5001/v1" Mode="" Description="Text Generation WebUI API URL" Type="Variable" Display="always" Required="false" Mask="false">http://host.docker.internal:5001/v1</Config>
+#   <Config Name="Civitai API Key" Target="CIVITAI_API_KEY" Default="" Mode="" Description="Optional Civitai API key for private content" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+# </Container>

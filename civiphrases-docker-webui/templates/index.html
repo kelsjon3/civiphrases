@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civiphrases Web UI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+        }
+        
+        .form-section {
+            padding: 30px;
+            border-right: 1px solid #e0e0e0;
+        }
+        
+        .logs-section {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-group input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-block;
+            margin-right: 10px;
+            text-decoration: none;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #545b62;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .status-indicator {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .status-idle {
+            background: #e9ecef;
+            color: #6c757d;
+        }
+        
+        .status-running {
+            background: #fff3cd;
+            color: #856404;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .logs-container {
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            word-wrap: break-word;
+        }
+        
+        .log-timestamp {
+            color: #a0aec0;
+            margin-right: 8px;
+        }
+        
+        .log-level-INFO {
+            color: #68d391;
+        }
+        
+        .log-level-ERROR {
+            color: #fc8181;
+        }
+        
+        .log-level-SUCCESS {
+            color: #81e6d9;
+            font-weight: bold;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .help-text {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        
+        .exclusive-options {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .exclusive-options h4 {
+            margin-bottom: 10px;
+            color: #495057;
+        }
+        
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+            
+            .form-section {
+                border-right: none;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 Civiphrases Web UI</h1>
+            <p>Generate ComfyUI wildcards from Civitai prompts with ease</p>
+        </div>
+        
+        <div class="content">
+            <div class="form-section">
+                <form method="POST" action="/run" id="civiphrases-form">
+                    <div class="form-group">
+                        <label for="civitai_api_key">Civitai API Key (Optional)</label>
+                        <input type="password" id="civitai_api_key" name="civitai_api_key" 
+                               placeholder="Leave empty for public content only">
+                        <div class="help-text">Required only for private content or to avoid rate limits</div>
+                    </div>
+                    
+                    <div class="exclusive-options">
+                        <h4>Source (Choose One)</h4>
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" name="username" 
+                                   placeholder="e.g., someuser123">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="collection_url">Collection URL or ID</label>
+                            <input type="text" id="collection_url" name="collection_url" 
+                                   placeholder="https://civitai.com/collections/12345 or just 12345">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="output_path">Output Path</label>
+                            <input type="text" id="output_path" name="output_path" 
+                                   value="/output" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="max_items">Max Items</label>
+                            <input type="number" id="max_items" name="max_items" 
+                                   value="200" min="1" max="2000">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tgw_base_url">Text Generation WebUI URL</label>
+                            <input type="url" id="tgw_base_url" name="tgw_base_url" 
+                                   value="http://127.0.0.1:5001/v1">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="tgw_api_key">TGW API Key</label>
+                            <input type="text" id="tgw_api_key" name="tgw_api_key" 
+                                   value="local">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="include_nsfw" name="include_nsfw">
+                            <label for="include_nsfw">Include NSFW Content</label>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary" id="run-btn"
+                            {% if job_state.running %}disabled{% endif %}>
+                        {% if job_state.running %}🔄 Running...{% else %}🚀 Run Civiphrases{% endif %}
+                    </button>
+                    
+                    <a href="/clear" class="btn btn-secondary"
+                       {% if job_state.running %}style="pointer-events: none; opacity: 0.6;"{% endif %}>
+                        🗑️ Clear Logs
+                    </a>
+                </form>
+            </div>
+            
+            <div class="logs-section">
+                <div class="status-indicator 
+                    {% if job_state.running %}status-running
+                    {% elif job_state.success == True %}status-success
+                    {% elif job_state.success == False %}status-error
+                    {% else %}status-idle{% endif %}">
+                    
+                    {% if job_state.running %}
+                        🔄 Job Running...
+                    {% elif job_state.success == True %}
+                        ✅ Job Completed Successfully
+                    {% elif job_state.success == False %}
+                        ❌ Job Failed
+                    {% else %}
+                        💤 Ready to Run
+                    {% endif %}
+                </div>
+                
+                <h3>📝 Logs</h3>
+                <div class="logs-container" id="logs-container">
+                    {% if job_state.logs %}
+                        {% for log in job_state.logs %}
+                            <div class="log-entry">
+                                <span class="log-timestamp">{{ log.timestamp }}</span>
+                                <span class="log-level-{{ log.level }}">[{{ log.level }}]</span>
+                                {{ log.message }}
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="log-entry">
+                            <span class="log-level-INFO">[INFO]</span> No logs yet. Submit the form to start processing.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh logs when job is running
+        function refreshStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Update status indicator
+                    const statusEl = document.querySelector('.status-indicator');
+                    const runBtn = document.getElementById('run-btn');
+                    
+                    statusEl.className = 'status-indicator ';
+                    
+                    if (data.running) {
+                        statusEl.className += 'status-running';
+                        statusEl.innerHTML = '🔄 Job Running...';
+                        runBtn.disabled = true;
+                        runBtn.innerHTML = '🔄 Running...';
+                    } else if (data.success === true) {
+                        statusEl.className += 'status-success';
+                        statusEl.innerHTML = '✅ Job Completed Successfully';
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '🚀 Run Civiphrases';
+                    } else if (data.success === false) {
+                        statusEl.className += 'status-error';
+                        statusEl.innerHTML = '❌ Job Failed';
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '🚀 Run Civiphrases';
+                    } else {
+                        statusEl.className += 'status-idle';
+                        statusEl.innerHTML = '💤 Ready to Run';
+                        runBtn.disabled = false;
+                        runBtn.innerHTML = '🚀 Run Civiphrases';
+                    }
+                    
+                    // Update logs
+                    const logsContainer = document.getElementById('logs-container');
+                    if (data.logs && data.logs.length > 0) {
+                        logsContainer.innerHTML = data.logs.map(log => 
+                            `<div class="log-entry">
+                                <span class="log-timestamp">${log.timestamp}</span>
+                                <span class="log-level-${log.level}">[${log.level}]</span>
+                                ${log.message}
+                            </div>`
+                        ).join('');
+                        
+                        // Auto-scroll to bottom
+                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                    }
+                })
+                .catch(console.error);
+        }
+        
+        // Refresh every 2 seconds
+        setInterval(refreshStatus, 2000);
+        
+        // Form validation
+        document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
+            const username = document.getElementById('username').value.trim();
+            const collectionUrl = document.getElementById('collection_url').value.trim();
+            
+            if (!username && !collectionUrl) {
+                e.preventDefault();
+                alert('Please provide either a username or collection URL.');
+                return;
+            }
+            
+            if (username && collectionUrl) {
+                e.preventDefault();
+                alert('Please provide either username OR collection URL, not both.');
+                return;
+            }
+        });
+        
+        // Clear the other field when one is filled
+        document.getElementById('username').addEventListener('input', function() {
+            if (this.value.trim()) {
+                document.getElementById('collection_url').value = '';
+            }
+        });
+        
+        document.getElementById('collection_url').addEventListener('input', function() {
+            if (this.value.trim()) {
+                document.getElementById('username').value = '';
+            }
+        });
+    </script>
+</body>
+</html>
