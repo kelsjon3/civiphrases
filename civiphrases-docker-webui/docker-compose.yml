@@ -2,16 +2,14 @@ version: '3.8'
 
 services:
   civiphrases-webui:
-    build: .
+    image: civiphrases-webui:latest
     container_name: civiphrases-webui
     restart: unless-stopped
     ports:
       - "5000:5000"
     volumes:
       # Map output directory to host (adjust path for your Unraid setup)
-      - /mnt/user/appdata/civiphrases:/output
-      # Optional: Map logs directory
-      - /mnt/user/appdata/civiphrases/logs:/app/logs
+      - /mnt/cache/appdata/civiphrases:/output
     environment:
       # Default environment variables (can be overridden)
       - OUT_DIR=/output

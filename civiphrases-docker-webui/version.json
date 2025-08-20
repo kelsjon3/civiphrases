@@ -1,0 +1,12 @@
+{
+  "version": "1.0.10",
+  "build_date": "2025-08-20T03:32:11Z",
+  "features": [
+    "Persistent form fields with localStorage",
+    "Copy logs to clipboard functionality", 
+    "Fixed Docker permissions for logs",
+    "Real-time log streaming",
+    "Beautiful responsive UI",
+    "Remote deployment automation"
+  ]
+}

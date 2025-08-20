@@ -25,14 +25,14 @@ RUN pip install -e .
 # Copy application files
 COPY app.py .
 COPY templates/ templates/
+COPY version.json .
 
-# Create output directory
-RUN mkdir -p /output
+# Create output directory and logs subdirectory
+RUN mkdir -p /output/logs
 
-# Create non-root user for security
-RUN useradd -m -u 1000 civiphrases && \
-    chown -R civiphrases:civiphrases /app /output
-USER civiphrases
+# Set up Unraid-compatible user (nobody/users)
+RUN chown -R nobody:users /app /output
+USER nobody
 
 # Expose port
 EXPOSE 5000

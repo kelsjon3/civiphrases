@@ -179,6 +179,20 @@ def health_check():
     """Simple health check endpoint."""
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
+@app.route('/version')
+def get_version():
+    """Get version information."""
+    try:
+        with open('version.json', 'r') as f:
+            version_data = json.load(f)
+        return jsonify(version_data)
+    except FileNotFoundError:
+        return jsonify({
+            'version': '1.0.0', 
+            'build_date': datetime.now().isoformat(),
+            'features': ['Basic deployment']
+        })
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

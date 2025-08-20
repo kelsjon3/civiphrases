@@ -2,8 +2,27 @@
 
 # Civiphrases Docker Deployment Script
 # Deploys the civiphrases-docker-webui to a remote Docker host
+#
+# Usage: ./deploy_to_docker.sh [--force-rebuild]
+#   --force-rebuild: Force complete rebuild without using Docker cache
 
 set -e  # Exit on any error
+
+# Parse command line arguments
+FORCE_REBUILD=false
+for arg in "$@"; do
+    case $arg in
+        --force-rebuild)
+            FORCE_REBUILD=true
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            echo "Usage: $0 [--force-rebuild]"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,7 +58,7 @@ print_error() {
 # Configuration
 DOCKER_HOST_IP="192.168.73.124"
 DOCKER_HOST_USER="root"  # Change this if you use a different user
-REMOTE_APP_DIR="/opt/civiphrases-webui"
+REMOTE_APP_DIR="/mnt/cache/appdata/civiphrases"
 LOCAL_APP_DIR="$(pwd)"
 CONTAINER_NAME="civiphrases-webui"
 IMAGE_NAME="civiphrases-webui:latest"
@@ -101,6 +120,39 @@ print_info "Creating remote application directory..."
 run_remote "mkdir -p ${REMOTE_APP_DIR}"
 print_status "Remote directory created: ${REMOTE_APP_DIR}"
 
+# Increment version number
+print_info "Incrementing version number..."
+if [ -f "version.json" ]; then
+    # Extract current version and increment patch number
+    current_version=$(grep '"version"' version.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+    major=$(echo $current_version | cut -d. -f1)
+    minor=$(echo $current_version | cut -d. -f2)
+    patch=$(echo $current_version | cut -d. -f3)
+    new_patch=$((patch + 1))
+    new_version="${major}.${minor}.${new_patch}"
+    
+    # Update version.json
+    current_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    cat > version.json << EOF
+{
+  "version": "${new_version}",
+  "build_date": "${current_date}",
+  "features": [
+    "Persistent form fields with localStorage",
+    "Copy logs to clipboard functionality", 
+    "Fixed Docker permissions for logs",
+    "Real-time log streaming",
+    "Beautiful responsive UI",
+    "Remote deployment automation"
+  ]
+}
+EOF
+    print_status "Version incremented to ${new_version}"
+else
+    print_error "version.json not found"
+    exit 1
+fi
+
 # Copy civiphrases source code into webui directory first
 print_info "Preparing civiphrases source code..."
 if [ -d "../civiphrases" ]; then
@@ -129,19 +181,28 @@ rsync -avz --delete \
 print_status "Files copied successfully"
 
 # Build Docker image on remote host
-print_info "Building Docker image on remote host..."
-run_remote "cd ${REMOTE_APP_DIR} && docker build -t ${IMAGE_NAME} ."
+if [ "$FORCE_REBUILD" = true ]; then
+    print_info "Building Docker image on remote host (forcing fresh build with no cache)..."
+    run_remote "cd ${REMOTE_APP_DIR} && docker rmi ${IMAGE_NAME} 2>/dev/null || true"
+    run_remote "cd ${REMOTE_APP_DIR} && docker build --no-cache --pull -t ${IMAGE_NAME} ."
+else
+    print_info "Building Docker image on remote host (using cache when possible)..."
+    run_remote "cd ${REMOTE_APP_DIR} && docker build -t ${IMAGE_NAME} ."
+fi
 print_status "Docker image built successfully"
 
 # Create output directory on host
 print_info "Creating output directory structure..."
-run_remote "mkdir -p /mnt/user/appdata/civiphrases/{wildcards,state,logs}"
-run_remote "chmod 755 /mnt/user/appdata/civiphrases"
-print_status "Output directories created"
+run_remote "mkdir -p /mnt/cache/appdata/civiphrases/{wildcards,state,logs}"
+run_remote "chmod -R 755 /mnt/cache/appdata/civiphrases"
+run_remote "chown -R 99:100 /mnt/cache/appdata/civiphrases"
+# Ensure logs directory has write permissions for nobody user
+run_remote "chmod 775 /mnt/cache/appdata/civiphrases/logs"
+print_status "Output directories created with proper permissions"
 
-# Deploy using docker-compose
+# Deploy using docker-compose (force recreate to use new image)
 print_info "Deploying container using docker-compose..."
-run_remote "cd ${REMOTE_APP_DIR} && ${COMPOSE_CMD} up -d"
+run_remote "cd ${REMOTE_APP_DIR} && ${COMPOSE_CMD} up -d --force-recreate"
 print_status "Container deployed successfully"
 
 # Wait a moment for container to start
@@ -168,6 +229,11 @@ else
     print_info "You can check logs with: ssh ${DOCKER_HOST_USER}@${DOCKER_HOST_IP} 'docker logs ${CONTAINER_NAME}'"
 fi
 
+# Clean up orphaned/dangling Docker images
+print_info "Cleaning up orphaned Docker images..."
+run_remote "docker image prune -f" || true
+print_status "Orphaned images cleaned up"
+
 # Cleanup will happen automatically via trap
 
 # Show final status
@@ -184,5 +250,6 @@ echo -e "${YELLOW}💡 Useful Commands:${NC}"
 echo -e "   View logs: ssh ${DOCKER_HOST_USER}@${DOCKER_HOST_IP} 'docker logs -f ${CONTAINER_NAME}'"
 echo -e "   Stop app:  ssh ${DOCKER_HOST_USER}@${DOCKER_HOST_IP} 'cd ${REMOTE_APP_DIR} && ${COMPOSE_CMD} down'"
 echo -e "   Restart:   ssh ${DOCKER_HOST_USER}@${DOCKER_HOST_IP} 'cd ${REMOTE_APP_DIR} && ${COMPOSE_CMD} restart'"
+echo -e "   Force rebuild: ./deploy_to_docker.sh --force-rebuild"
 echo ""
 echo -e "${GREEN}🎨 Ready to generate some wildcards! Visit http://${DOCKER_HOST_IP}:5000${NC}"

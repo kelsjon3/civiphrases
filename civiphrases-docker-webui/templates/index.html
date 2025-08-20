@@ -246,6 +246,9 @@
         <div class="header">
             <h1>🎨 Civiphrases Web UI</h1>
             <p>Generate ComfyUI wildcards from Civitai prompts with ease</p>
+            <div id="version-info" style="opacity: 0.8; font-size: 0.9em; margin-top: 10px;">
+                <span id="version-number">Loading version...</span>
+            </div>
         </div>
         
         <div class="content">
@@ -291,7 +294,7 @@
                         <div class="form-group">
                             <label for="tgw_base_url">Text Generation WebUI URL</label>
                             <input type="url" id="tgw_base_url" name="tgw_base_url" 
-                                   value="http://127.0.0.1:5001/v1">
+                                   value="http://192.168.73.124:5001/v1">
                         </div>
                         
                         <div class="form-group">
@@ -313,10 +316,10 @@
                         {% if job_state.running %}🔄 Running...{% else %}🚀 Run Civiphrases{% endif %}
                     </button>
                     
-                    <a href="/clear" class="btn btn-secondary"
+                    <button type="button" class="btn btn-secondary" onclick="copyLogsToClipboard()"
                        {% if job_state.running %}style="pointer-events: none; opacity: 0.6;"{% endif %}>
-                        🗑️ Clear Logs
-                    </a>
+                        📋 Copy Logs to Clipboard
+                    </button>
                 </form>
             </div>
             
@@ -359,6 +362,97 @@
     </div>
 
     <script>
+        // Persistent form fields using localStorage
+        const STORAGE_KEY = 'civiphrases_form_data';
+        
+        // Form field IDs to persist
+        const PERSISTENT_FIELDS = [
+            'civitai_api_key',
+            'username', 
+            'collection_url',
+            'output_path',
+            'max_items',
+            'tgw_base_url',
+            'tgw_api_key',
+            'include_nsfw'
+        ];
+        
+        // Save form data to localStorage
+        function saveFormData() {
+            const formData = {};
+            PERSISTENT_FIELDS.forEach(fieldId => {
+                const field = document.getElementById(fieldId);
+                if (field) {
+                    if (field.type === 'checkbox') {
+                        formData[fieldId] = field.checked;
+                    } else {
+                        formData[fieldId] = field.value;
+                    }
+                }
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+        }
+        
+        // Load form data from localStorage
+        function loadFormData() {
+            try {
+                const savedData = localStorage.getItem(STORAGE_KEY);
+                if (savedData) {
+                    const formData = JSON.parse(savedData);
+                    PERSISTENT_FIELDS.forEach(fieldId => {
+                        const field = document.getElementById(fieldId);
+                        if (field && formData[fieldId] !== undefined) {
+                            if (field.type === 'checkbox') {
+                                field.checked = formData[fieldId];
+                            } else {
+                                field.value = formData[fieldId];
+                            }
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('Error loading form data:', e);
+            }
+        }
+        
+        // Copy logs to clipboard
+        async function copyLogsToClipboard() {
+            try {
+                const logsContainer = document.getElementById('logs-container');
+                const logEntries = logsContainer.querySelectorAll('.log-entry');
+                
+                let logsText = '';
+                logEntries.forEach(entry => {
+                    const timestamp = entry.querySelector('.log-timestamp')?.textContent || '';
+                    const level = entry.querySelector('[class*="log-level-"]')?.textContent || '';
+                    const message = entry.textContent.replace(timestamp, '').replace(level, '').trim();
+                    logsText += `${timestamp} ${level} ${message}\n`;
+                });
+                
+                if (logsText.trim() === '') {
+                    alert('No logs to copy');
+                    return;
+                }
+                
+                await navigator.clipboard.writeText(logsText);
+                
+                // Visual feedback
+                const btn = document.getElementById('copy-logs-btn');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '✅ Copied!';
+                btn.style.background = '#28a745';
+                
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.style.background = '';
+                }, 2000);
+                
+            } catch (err) {
+                console.error('Failed to copy logs:', err);
+                alert('Failed to copy logs to clipboard');
+            }
+        }
+        
         // Auto-refresh logs when job is running
         function refreshStatus() {
             fetch('/status')
@@ -410,39 +504,80 @@
                 .catch(console.error);
         }
         
+        // Load and display version information
+        function loadVersionInfo() {
+            fetch('/version')
+                .then(response => response.json())
+                .then(data => {
+                    const versionEl = document.getElementById('version-number');
+                    const buildDate = new Date(data.build_date).toLocaleDateString();
+                    versionEl.innerHTML = `v${data.version} (${buildDate})`;
+                })
+                .catch(err => {
+                    console.error('Failed to load version:', err);
+                    document.getElementById('version-number').innerHTML = 'v1.0.0';
+                });
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load version info
+            loadVersionInfo();
+            
+            // Load saved form data
+            loadFormData();
+            
+            // Add event listeners to save form data when fields change
+            PERSISTENT_FIELDS.forEach(fieldId => {
+                const field = document.getElementById(fieldId);
+                if (field) {
+                    if (field.type === 'checkbox') {
+                        field.addEventListener('change', saveFormData);
+                    } else {
+                        field.addEventListener('input', saveFormData);
+                    }
+                }
+            });
+            
+            // Form validation
+            document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
+                const username = document.getElementById('username').value.trim();
+                const collectionUrl = document.getElementById('collection_url').value.trim();
+                
+                if (!username && !collectionUrl) {
+                    e.preventDefault();
+                    alert('Please provide either a username or collection URL.');
+                    return;
+                }
+                
+                if (username && collectionUrl) {
+                    e.preventDefault();
+                    alert('Please provide either username OR collection URL, not both.');
+                    return;
+                }
+                
+                // Save form data before submit
+                saveFormData();
+            });
+            
+            // Clear the other field when one is filled
+            document.getElementById('username').addEventListener('input', function() {
+                if (this.value.trim()) {
+                    document.getElementById('collection_url').value = '';
+                }
+                saveFormData();
+            });
+            
+            document.getElementById('collection_url').addEventListener('input', function() {
+                if (this.value.trim()) {
+                    document.getElementById('username').value = '';
+                }
+                saveFormData();
+            });
+        });
+        
         // Refresh every 2 seconds
         setInterval(refreshStatus, 2000);
-        
-        // Form validation
-        document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
-            const username = document.getElementById('username').value.trim();
-            const collectionUrl = document.getElementById('collection_url').value.trim();
-            
-            if (!username && !collectionUrl) {
-                e.preventDefault();
-                alert('Please provide either a username or collection URL.');
-                return;
-            }
-            
-            if (username && collectionUrl) {
-                e.preventDefault();
-                alert('Please provide either username OR collection URL, not both.');
-                return;
-            }
-        });
-        
-        // Clear the other field when one is filled
-        document.getElementById('username').addEventListener('input', function() {
-            if (this.value.trim()) {
-                document.getElementById('collection_url').value = '';
-            }
-        });
-        
-        document.getElementById('collection_url').addEventListener('input', function() {
-            if (this.value.trim()) {
-                document.getElementById('username').value = '';
-            }
-        });
     </script>
 </body>
 </html>
