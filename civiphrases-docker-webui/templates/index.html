@@ -178,6 +178,34 @@
             line-height: 1.4;
         }
         
+        /* Badge styling for API key validation */
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
         .log-entry {
             margin-bottom: 8px;
             word-wrap: break-word;
@@ -259,6 +287,10 @@
                         <input type="password" id="civitai_api_key" name="civitai_api_key" 
                                placeholder="Leave empty for public content only">
                         <div class="help-text">Required only for private content or to avoid rate limits</div>
+                        <div id="api-key-status" class="mt-2" style="display: none; margin-top: 8px;">
+                            <span id="username-display" class="badge badge-success"></span>
+                            <span id="api-error" class="badge badge-danger"></span>
+                        </div>
                     </div>
                     
                     <div class="exclusive-options">
@@ -316,8 +348,7 @@
                         {% if job_state.running %}🔄 Running...{% else %}🚀 Run Civiphrases{% endif %}
                     </button>
                     
-                    <button type="button" class="btn btn-secondary" onclick="copyLogsToClipboard()"
-                       {% if job_state.running %}style="pointer-events: none; opacity: 0.6;"{% endif %}>
+                    <button type="button" class="btn btn-secondary" id="copy-logs-btn" onclick="copyLogsToClipboard()">
                         📋 Copy Logs to Clipboard
                     </button>
                 </form>
@@ -434,7 +465,28 @@
                     return;
                 }
                 
-                await navigator.clipboard.writeText(logsText);
+                // Try modern clipboard API first
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(logsText);
+                } else {
+                    // Fallback for HTTP or older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = logsText;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    textArea.style.top = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    try {
+                        document.execCommand('copy');
+                        textArea.remove();
+                    } catch (fallbackErr) {
+                        textArea.remove();
+                        throw new Error('Clipboard API not supported and fallback failed');
+                    }
+                }
                 
                 // Visual feedback
                 const btn = document.getElementById('copy-logs-btn');
@@ -449,7 +501,34 @@
                 
             } catch (err) {
                 console.error('Failed to copy logs:', err);
-                alert('Failed to copy logs to clipboard');
+                
+                // More helpful error message
+                if (err.message.includes('Clipboard API not supported')) {
+                    alert('Clipboard not supported in this browser. Try using Ctrl+C on the logs text instead.');
+                } else if (err.message.includes('Permission denied')) {
+                    alert('Clipboard permission denied. Please allow clipboard access and try again.');
+                } else {
+                    alert(`Failed to copy logs: ${err.message}`);
+                }
+            }
+        }
+        
+        // Update button states based on job status
+        function updateButtonStates() {
+            const copyLogsBtn = document.getElementById('copy-logs-btn');
+            
+            if (copyLogsBtn) {
+                // Check if we have logs to copy
+                const logsContainer = document.getElementById('logs-container');
+                const hasLogs = logsContainer && logsContainer.textContent.trim() !== 'No logs yet. Submit the form to start processing.';
+                
+                if (hasLogs) {
+                    copyLogsBtn.style.pointerEvents = 'auto';
+                    copyLogsBtn.style.opacity = '1';
+                } else {
+                    copyLogsBtn.style.pointerEvents = 'none';
+                    copyLogsBtn.style.opacity = '0.6';
+                }
             }
         }
         
@@ -500,8 +579,65 @@
                         // Auto-scroll to bottom
                         logsContainer.scrollTop = logsContainer.scrollHeight;
                     }
+                    
+                    // Update button states
+                    updateButtonStates();
                 })
                 .catch(console.error);
+        }
+        
+        // Validate Civitai API key and display username
+        async function validateApiKey() {
+            console.log('validateApiKey called');
+            const apiKey = document.getElementById('civitai_api_key').value.trim();
+            const statusDiv = document.getElementById('api-key-status');
+            const usernameSpan = document.getElementById('username-display');
+            const errorSpan = document.getElementById('api-error');
+            
+            console.log('API Key length:', apiKey.length);
+            console.log('Status div:', statusDiv);
+            console.log('Username span:', usernameSpan);
+            console.log('Error span:', errorSpan);
+            
+            // Hide status if no API key
+            if (!apiKey) {
+                statusDiv.style.display = 'none';
+                return;
+            }
+            
+            // Show loading state
+            statusDiv.style.display = 'block';
+            usernameSpan.innerHTML = '🔍 Validating...';
+            usernameSpan.className = 'badge badge-warning';
+            errorSpan.style.display = 'none';
+            
+            try {
+                const response = await fetch('/validate_api_key', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+                
+                const data = await response.json();
+                
+                if (data.valid) {
+                    usernameSpan.innerHTML = `👤 ${data.username}`;
+                    usernameSpan.className = 'badge badge-success';
+                    errorSpan.style.display = 'none';
+                } else {
+                    usernameSpan.innerHTML = '❌ Invalid';
+                    usernameSpan.className = 'badge badge-danger';
+                    errorSpan.innerHTML = data.error;
+                    errorSpan.style.display = 'inline';
+                }
+            } catch (err) {
+                usernameSpan.innerHTML = '❌ Error';
+                usernameSpan.className = 'badge badge-danger';
+                errorSpan.innerHTML = 'Network error';
+                errorSpan.style.display = 'inline';
+            }
         }
         
         // Load and display version information
@@ -526,6 +662,26 @@
             
             // Load saved form data
             loadFormData();
+            
+            // Initialize button states
+            updateButtonStates();
+            
+            // Add API key validation
+            const apiKeyField = document.getElementById('civitai_api_key');
+            console.log('API Key field found:', apiKeyField);
+            if (apiKeyField) {
+                console.log('Adding input event listener to API key field');
+                apiKeyField.addEventListener('input', validateApiKey);
+                
+                // Auto-validate API key on page load if one exists
+                const savedApiKey = apiKeyField.value.trim();
+                if (savedApiKey) {
+                    console.log('Auto-validating saved API key on page load');
+                    validateApiKey();
+                }
+            } else {
+                console.error('API Key field not found!');
+            }
             
             // Add event listeners to save form data when fields change
             PERSISTENT_FIELDS.forEach(fieldId => {

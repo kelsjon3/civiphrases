@@ -196,8 +196,14 @@ print_info "Creating output directory structure..."
 run_remote "mkdir -p /mnt/cache/appdata/civiphrases/{wildcards,state,logs}"
 run_remote "chmod -R 755 /mnt/cache/appdata/civiphrases"
 run_remote "chown -R 99:100 /mnt/cache/appdata/civiphrases"
-# Ensure logs directory has write permissions for nobody user
+# Ensure all subdirectories have write permissions for nobody user (775 = rwxrwxr-x)
 run_remote "chmod 775 /mnt/cache/appdata/civiphrases/logs"
+run_remote "chmod 775 /mnt/cache/appdata/civiphrases/state"
+run_remote "chmod 775 /mnt/cache/appdata/civiphrases/wildcards"
+# Ensure any existing log files have correct write permissions (664 = rw-rw-r--)
+run_remote "find /mnt/cache/appdata/civiphrases/logs -name '*.log' -exec chmod 664 {} \\; 2>/dev/null || true"
+# Ensure any existing state files have correct write permissions
+run_remote "find /mnt/cache/appdata/civiphrases/state -name '*.json*' -exec chmod 664 {} \\; 2>/dev/null || true"
 print_status "Output directories created with proper permissions"
 
 # Deploy using docker-compose (force recreate to use new image)

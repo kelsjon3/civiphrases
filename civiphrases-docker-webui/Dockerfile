@@ -31,8 +31,10 @@ COPY version.json .
 RUN mkdir -p /output/logs
 
 # Set up Unraid-compatible user (nobody/users)
-RUN chown -R nobody:users /app /output
-USER nobody
+RUN groupadd -g 100 users 2>/dev/null || true && \
+    useradd -u 99 -g 100 -s /bin/bash nobody 2>/dev/null || true && \
+    chown -R nobody:users /app /output
+USER nobody:users
 
 # Expose port
 EXPOSE 5000

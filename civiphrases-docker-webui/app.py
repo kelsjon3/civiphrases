@@ -12,6 +12,7 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import json
 import logging
+import requests
 
 app = Flask(__name__)
 
@@ -188,10 +189,35 @@ def get_version():
         return jsonify(version_data)
     except FileNotFoundError:
         return jsonify({
-            'version': '1.0.0', 
+            'version': '1.0.0',
             'build_date': datetime.now().isoformat(),
             'features': ['Basic deployment']
         })
+
+@app.route('/validate_api_key', methods=['POST'])
+def validate_api_key():
+    """Validate Civitai API key and return username."""
+    try:
+        api_key = request.json.get('api_key', '').strip()
+        if not api_key:
+            return jsonify({'valid': False, 'username': None, 'error': 'No API key provided'})
+        
+        # Make a test request to Civitai API to validate the key
+        # Use the correct endpoint: /api/v1/me
+        headers = {'Authorization': f'Bearer {api_key}'}
+        response = requests.get('https://civitai.com/api/v1/me', headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            username = user_data.get('username', 'Unknown')
+            return jsonify({'valid': True, 'username': username, 'error': None})
+        else:
+            return jsonify({'valid': False, 'username': None, 'error': f'API key validation failed: {response.status_code}'})
+            
+    except requests.exceptions.RequestException as e:
+        return jsonify({'valid': False, 'username': None, 'error': f'Network error: {str(e)}'})
+    except Exception as e:
+        return jsonify({'valid': False, 'username': None, 'error': f'Validation error: {str(e)}'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
