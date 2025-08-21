@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import List, Dict, Any, Optional
 import openai
@@ -19,14 +20,8 @@ class PhraseClassification(BaseModel):
     category: str
 
 
-class ClassificationResult(BaseModel):
-    source_id: str
-    polarity: str
-    phrases: List[PhraseClassification]
-
-
 class ClassificationResponse(BaseModel):
-    results: List[ClassificationResult]
+    phrases: List[PhraseClassification]
 
 
 class LLMClassifier:
@@ -39,40 +34,37 @@ class LLMClassifier:
     }
     
     # System prompt as specified in the project plan
-    SYSTEM_PROMPT = """You are a classifier that takes Stable Diffusion prompts and prepares them for use in ComfyUI's Dynamic Prompts.
+    SYSTEM_PROMPT = """You are a phrase classifier. Split Stable Diffusion prompts into phrases and classify each phrase.
+
+CRITICAL: Output ONLY valid JSON. No text before or after the JSON. No explanations.
 
 Task:
-1) Input will be one or more prompts, often long and comma-separated.
-2) Split each prompt into short, distinct phrases. (A phrase is usually 1–4 words; do not merge multiple ideas.)
-3) For each phrase, assign exactly one category from this set:
-   - subjects (people, creatures, objects, characters, props)
-   - styles (art movements, render engines, mediums, franchises/brands, "in the style of")
-   - aesthetics (lighting, mood, colors, atmosphere)
-   - techniques (camera terms, composition, lens settings, 3D/photography jargon)
-   - quality_boosters (e.g., "masterpiece", "best quality", "highly detailed")
-   - negatives (undesirable features like "blurry", "extra fingers", "bad anatomy")
-   - modifiers (generic adjectives like "intricate", "minimalist", "cute")
-4) Output strictly as JSON with this schema:
+1) Split the prompt into natural phrases (usually 2-6 words)
+2) Classify each phrase into exactly one category:
+   - subjects: people, creatures, objects, characters, props
+   - styles: art movements, render engines, mediums, franchises
+   - aesthetics: lighting, mood, colors, atmosphere
+   - techniques: camera terms, composition, lens settings
+   - quality_boosters: "masterpiece", "best quality", "highly detailed"
+   - negatives: "blurry", "extra fingers", "bad anatomy"
+   - modifiers: "intricate", "minimalist", "cute"
 
+Output format (JSON ONLY):
 {
-  "results": [
-    {
-      "source_id": "string",              // item_id from the caller
-      "polarity": "pos" | "neg",          // prompt polarity
-      "phrases": [
-        { "text": "string", "category": "subjects" },
-        ...
-      ]
-    },
-    ...
+  "phrases": [
+    {"text": "a beautiful girl", "category": "subjects"},
+    {"text": "with red hair", "category": "modifiers"},
+    {"text": "walks slowly through", "category": "techniques"},
+    {"text": "a dark forest", "category": "subjects"}
   ]
 }
 
 Rules:
-- No commentary; JSON only.
-- Do not invent phrases; only split what is present.
-- Normalize spacing; do not lowercase the phrase text.
-- Keep JSON valid and parseable."""
+- Output ONLY the JSON object above
+- No text before "{" or after "}"
+- No commentary, reasoning, or explanations
+- No "Here is the output" or similar text
+- Ensure the JSON is complete and properly closed"""
     
     def __init__(self):
         """Initialize the LLM classifier."""
@@ -86,10 +78,22 @@ Rules:
         logger.info(f"Initialized LLM classifier with model: {self.model_name}")
     
     def _get_available_model(self) -> str:
-        """Get the first available model from the API."""
+        """Get the first available model from the API or use the specified model."""
         try:
             models = self.client.models.list()
             if models.data:
+                # If a specific model is requested, try to use it
+                if config.tgw_model_name:
+                    # Look for the requested model
+                    for model in models.data:
+                        if model.id == config.tgw_model_name:
+                            logger.info(f"Using requested model: {model.id}")
+                            return model.id
+                    
+                    # If requested model not found, log warning and fall back to first available
+                    logger.warning(f"Requested model '{config.tgw_model_name}' not found, using first available")
+                
+                # Use first available model (default behavior)
                 model_name = models.data[0].id
                 logger.info(f"Using model: {model_name}")
                 return model_name
@@ -102,86 +106,191 @@ Rules:
     
     def _create_batch_payload(self, worklist_batch: List[Dict[str, Any]]) -> str:
         """Create the user message payload for a batch of prompts."""
-        batch_data = {
-            "batch": []
-        }
-        
-        for entry in worklist_batch:
-            batch_data["batch"].append({
-                "source_id": entry["item_id"],
-                "polarity": entry["polarity"],
-                "prompt": entry["text"]
-            })
-        
-        return json.dumps(batch_data, ensure_ascii=False)
+        # For now, just use the first prompt in the batch
+        # We can expand this later if needed
+        if worklist_batch:
+            return worklist_batch[0]["text"]
+        return ""
     
     def _validate_and_fix_response(self, response_text: str) -> Optional[ClassificationResponse]:
         """Validate LLM response and attempt to fix common issues."""
+        # Clean the response text to extract JSON
+        logger.info("Attempting to extract JSON from response...")
+        cleaned_text = self._extract_json_from_response(response_text)
+        
+        if not cleaned_text:
+            logger.error("Could not extract JSON from response")
+            logger.error(f"Response text: {response_text[:500]}...")
+            return None
+        else:
+            logger.info(f"Successfully extracted JSON (length: {len(cleaned_text)})")
+            logger.info(f"Extracted JSON: {cleaned_text}")
+        
         try:
-            # Try to parse as JSON first
-            response_data = json.loads(response_text)
+            # Try to parse the cleaned JSON
+            response_data = json.loads(cleaned_text)
             
             # Validate with Pydantic
             validated = ClassificationResponse(**response_data)
             
             # Additional validation: check categories
-            for result in validated.results:
-                for phrase in result.phrases:
-                    if phrase.category not in self.VALID_CATEGORIES:
-                        logger.warning(f"Invalid category '{phrase.category}' for phrase '{phrase.text}', skipping phrase")
-                        continue
+            for phrase in validated.phrases:
+                if phrase.category not in self.VALID_CATEGORIES:
+                    logger.warning(f"Invalid category '{phrase.category}' for phrase '{phrase.text}', skipping phrase")
+                    continue
             
             return validated
             
         except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
-            logger.error(f"Response text: {response_text[:500]}...")
+            logger.error(f"JSON decode error after cleaning: {e}")
+            logger.error(f"Cleaned text: {cleaned_text[:500]}...")
             return None
         except ValidationError as e:
             logger.error(f"Validation error: {e}")
             return None
     
-    def _force_negatives_category(self, results: List[ClassificationResult]) -> List[ClassificationResult]:
-        """Force obvious negative phrases back to 'negatives' category if LLM mislabeled them."""
+    def _extract_json_from_response(self, response_text: str) -> Optional[str]:
+        """Extract JSON from response text that may contain extra content."""
         
-        # Common negative phrases that should always be in negatives category
-        negative_indicators = {
-            "blurry", "blur", "out of focus", "unfocused",
-            "extra fingers", "extra limbs", "extra arms", "extra legs",
-            "bad anatomy", "bad hands", "bad face", "deformed",
-            "ugly", "disgusting", "gross", "horrific",
-            "low quality", "low res", "low resolution", "pixelated",
-            "artifacts", "compression", "jpeg artifacts",
-            "worst quality", "bad quality", "poor quality",
-            "distorted", "malformed", "mutated", "disfigured",
-            "cropped", "cut off", "partial", "incomplete",
-            "duplicate", "doubled", "multiple", "cloned",
-            "watermark", "signature", "text", "logo", "copyright",
-            "nsfw", "nude", "naked", "explicit"
-        }
+        # Remove common prefixes like "Here is the output in JSON format:"
+        text = response_text.strip()
         
-        fixed_results = []
+        # Look for JSON object patterns
+        # Find the first { and try to parse from there
+        json_start = text.find('{')
+        if json_start == -1:
+            logger.warning("No JSON object found in response")
+            return None
         
-        for result in results:
-            fixed_phrases = []
-            
-            for phrase in result.phrases:
-                phrase_lower = phrase.text.lower()
-                
-                # If this is from a negative prompt or contains negative indicators, force to negatives
-                if (result.polarity == "neg" or 
-                    any(neg_word in phrase_lower for neg_word in negative_indicators)):
+        # Extract from the first { to the end
+        json_text = text[json_start:]
+        
+        # First, try to find complete JSON by matching braces
+        complete_json = self._find_complete_json(json_text)
+        if complete_json:
+            return complete_json
+        
+        # If no complete JSON found, try to fix truncation
+        logger.warning("Could not find complete JSON, attempting to fix truncation...")
+        
+        # Try to complete the JSON structure
+        fixed_json = self._fix_truncated_json(json_text)
+        if fixed_json:
+            return fixed_json
+        
+        logger.error("Could not extract or fix JSON from response")
+        return None
+    
+    def _find_complete_json(self, json_text: str) -> Optional[str]:
+        """Find complete JSON by matching braces."""
+        brace_count = 0
+        for i, char in enumerate(json_text):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found complete JSON object
+                    complete_json = json_text[:i+1]
                     
-                    if phrase.category != "negatives":
-                        logger.debug(f"Forcing phrase '{phrase.text}' to 'negatives' category")
-                        phrase.category = "negatives"
-                
-                fixed_phrases.append(phrase)
-            
-            result.phrases = fixed_phrases
-            fixed_results.append(result)
+                    # Validate it's actually JSON
+                    try:
+                        json.loads(complete_json)
+                        logger.debug("Successfully extracted complete JSON")
+                        return complete_json
+                    except json.JSONDecodeError:
+                        logger.debug("Extracted text is not valid JSON, trying to fix...")
+                        continue
         
-        return fixed_results
+        return None
+    
+    def _fix_truncated_json(self, json_text: str) -> Optional[str]:
+        """Fix truncated JSON by completing incomplete phrases and structure."""
+        # Find all complete phrases
+        phrases_pattern = r'{"text":\s*"[^"]*",\s*"category":\s*"[^"]*"}'
+        matches = list(re.finditer(phrases_pattern, json_text))
+        
+        if not matches:
+            logger.debug("No complete phrases found to work with")
+            return None
+        
+        # Get the last complete phrase position
+        last_complete_end = matches[-1].end()
+        
+        # Extract everything up to the last complete phrase
+        partial_json = json_text[:last_complete_end]
+        
+        # Try different completion strategies
+        completion_strategies = [
+            # Strategy 1: Simple array and object closure
+            partial_json + '\n  ]\n}',
+            # Strategy 2: Add closing brackets with proper formatting
+            partial_json + '\n]}',
+            # Strategy 3: Just close the array and object
+            partial_json + ']}',
+            # Strategy 4: Add a comma and close (in case last phrase was incomplete)
+            partial_json + ',]}',
+        ]
+        
+        for completed_json in completion_strategies:
+            try:
+                # Validate the completed JSON
+                parsed = json.loads(completed_json)
+                
+                # Additional validation: ensure it has the expected structure
+                if 'phrases' in parsed and isinstance(parsed['phrases'], list):
+                    logger.debug(f"Successfully fixed truncated JSON with {len(parsed['phrases'])} phrases")
+                    return completed_json
+                    
+            except json.JSONDecodeError:
+                continue
+        
+        # If all strategies failed, try to salvage what we can
+        logger.debug("All completion strategies failed, trying salvage approach...")
+        
+        # Look for the last complete phrase and try to close from there
+        if matches:
+            # Get the content up to the last complete phrase
+            salvage_json = json_text[:last_complete_end]
+            
+            # Try to close it properly
+            try:
+                salvage_json += '\n]}'
+                parsed = json.loads(salvage_json)
+                if 'phrases' in parsed and isinstance(parsed['phrases'], list):
+                    logger.debug(f"Successfully salvaged JSON with {len(parsed['phrases'])} phrases")
+                    return salvage_json
+            except json.JSONDecodeError:
+                pass
+        
+        return None
+    
+    def _extract_partial_phrases(self, response_text: str) -> List[Dict[str, Any]]:
+        """Extract partial phrases from a failed response as a last resort."""
+        
+        phrases = []
+        
+        # Look for phrase patterns in the text
+        phrase_pattern = r'{"text":\s*"([^"]*)",\s*"category":\s*"([^"]*)"}'
+        matches = re.finditer(phrase_pattern, response_text)
+        
+        for match in matches:
+            text = match.group(1).strip()
+            category = match.group(2).strip()
+            
+            # Validate the category
+            if category in self.VALID_CATEGORIES:
+                phrases.append({
+                    "text": text,
+                    "category": category,
+                    "polarity": "pos",
+                    "source_id": "partial_extraction"
+                })
+                logger.debug(f"Extracted partial phrase: {text} -> {category}")
+            else:
+                logger.warning(f"Skipping phrase with invalid category: {text} -> {category}")
+        
+        return phrases
     
     def classify_batch(self, worklist_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -201,73 +310,73 @@ Rules:
         # Create the payload
         user_message = self._create_batch_payload(worklist_batch)
         
-        # Prepare messages
+        # Prepare the messages
         messages = [
             {"role": "system", "content": self.SYSTEM_PROMPT},
             {"role": "user", "content": user_message}
         ]
         
-        max_attempts = 2
-        
-        for attempt in range(max_attempts):
-            try:
-                # Make the API call
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=0.1,  # Low temperature for consistent classification
-                    max_tokens=4000,  # Should be enough for most batches
-                    timeout=60
-                )
+        # Make the API call
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=4000,  # Much higher limit to prevent truncation
+                temperature=0.1,
+                # TGW-specific parameters to improve response quality
+                top_p=0.9,
+                frequency_penalty=0.1,
+                presence_penalty=0.1
+            )
+            
+            response_text = response.choices[0].message.content
+            
+            # Log the full response for debugging
+            logger.info(f"Raw LLM response (length: {len(response_text)}): {response_text}")
+            
+            # Also log the first and last 200 characters to see truncation
+            if len(response_text) > 400:
+                logger.info(f"Response preview - First 200 chars: {response_text[:200]}")
+                logger.info(f"Response preview - Last 200 chars: {response_text[-200:]}")
+            else:
+                logger.info(f"Full response: {response_text}")
+            
+            # Validate and parse the response
+            validated_response = self._validate_and_fix_response(response_text)
+            
+            if validated_response:
+                # Convert to list of phrase dictionaries
+                phrases = []
+                for phrase in validated_response.phrases:
+                    phrases.append({
+                        "text": phrase.text.strip(),
+                        "category": phrase.category,
+                        "polarity": "pos", # Default polarity
+                        "source_id": worklist_batch[0]["item_id"] if worklist_batch else "N/A"
+                    })
                 
-                response_text = response.choices[0].message.content
-                logger.debug(f"Raw LLM response: {response_text[:200]}...")
+                logger.debug(f"Successfully classified {len(phrases)} phrases")
+                return phrases
+            else:
+                logger.error("Failed to validate LLM response")
                 
-                # Validate the response
-                validated_response = self._validate_and_fix_response(response_text)
+                # Fallback: try to extract partial phrases from the raw response
+                logger.info("Attempting to extract partial phrases from failed response...")
+                partial_phrases = self._extract_partial_phrases(response_text)
                 
-                if validated_response:
-                    # Apply negative phrase correction
-                    fixed_results = self._force_negatives_category(validated_response.results)
-                    
-                    # Convert to list of phrase dictionaries
-                    phrases = []
-                    for result in fixed_results:
-                        for phrase in result.phrases:
-                            phrases.append({
-                                "text": phrase.text.strip(),
-                                "category": phrase.category,
-                                "polarity": result.polarity,
-                                "source_id": result.source_id
-                            })
-                    
-                    logger.debug(f"Successfully classified {len(phrases)} phrases")
-                    return phrases
-                
+                if partial_phrases:
+                    logger.info(f"Successfully extracted {len(partial_phrases)} partial phrases")
+                    for phrase in partial_phrases:
+                        logger.info(f"  - {phrase['text']} -> {phrase['category']}")
+                    return partial_phrases
                 else:
-                    if attempt < max_attempts - 1:
-                        logger.warning(f"Invalid response on attempt {attempt + 1}, retrying with stricter instruction")
-                        # Add stricter instruction for retry
-                        messages.append({
-                            "role": "assistant", 
-                            "content": response_text
-                        })
-                        messages.append({
-                            "role": "user", 
-                            "content": "Return only valid JSON as specified."
-                        })
-                    else:
-                        logger.error("Failed to get valid response after all attempts")
-                        return []
+                    logger.error("No partial phrases could be extracted either")
                 
-            except Exception as e:
-                logger.error(f"Error during LLM classification on attempt {attempt + 1}: {e}")
-                if attempt < max_attempts - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    return []
-        
-        return []
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error during LLM classification: {e}")
+            return []
     
     def classify_worklist(
         self, 
