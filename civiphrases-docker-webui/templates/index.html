@@ -740,32 +740,18 @@
                         if (data.running) {
                             statusEl.className += 'status-running';
                             statusEl.innerHTML = '🔄 Job Running...';
-                            
-                            // Start auto-refresh when job starts
-                            // if (!autoRefreshInterval) { // Removed auto-refresh logic
-                            //     onJobStart();
-                            // }
                         } else if (data.success === true) {
                             statusEl.className += 'status-success';
                             statusEl.innerHTML = '✅ Job Completed Successfully';
                             
-                            // Stop auto-refresh when job completes
-                            // onJobComplete(); // Removed auto-refresh logic
-                            
-                            // Auto-refresh images one more time to get final results
-                            setTimeout(loadImages, 1000);
+                            // Don't auto-refresh images when job completes - keep current images
+                            // The images are already displayed and working
                         } else if (data.success === false) {
                             statusEl.className += 'status-error';
                             statusEl.innerHTML = '❌ Job Failed';
-                            
-                            // Stop auto-refresh when job fails
-                            // onJobComplete(); // Removed auto-refresh logic
                         } else {
                             statusEl.className += 'status-idle';
                             statusEl.innerHTML = '💤 Ready to Run';
-                            
-                            // Stop auto-refresh when no job is running
-                            // onJobComplete(); // Removed auto-refresh logic
                         }
                     }
                     
@@ -1205,13 +1191,13 @@
         }
         
         // Refresh images when job completes
-        function refreshImages() {
-            // Only refresh if we have a successful job completion
-            const statusEl = document.querySelector('.status-indicator');
-            if (statusEl && statusEl.classList.contains('status-success')) {
-                loadImages();
-            }
-        }
+        // function refreshImages() { // Removed auto-refresh logic
+        //     // Only refresh if we have a successful job completion
+        //     const statusEl = document.querySelector('.status-indicator'); // Removed auto-refresh logic
+        //     if (statusEl && statusEl.classList.contains('status-success')) { // Removed auto-refresh logic
+        //         loadImages(); // Removed auto-refresh logic
+        //     } // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
         
         // Auto-refresh images during processing
         // let autoRefreshInterval = null; // Removed auto-refresh logic

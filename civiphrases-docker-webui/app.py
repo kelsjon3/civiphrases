@@ -474,6 +474,7 @@ def get_images():
     global images_state
     
     # First priority: return images from the working Civitai API fetch
+    # These are the images that were fetched immediately when the form was submitted
     if images_state['images']:
         return jsonify({
             'success': True,
@@ -482,7 +483,8 @@ def get_images():
             'count': len(images_state['images'])
         })
     
-    # Fallback: try to get images from civiphrases state files
+    # Only fall back to civiphrases state files if we have no working images
+    # This prevents the state files from overriding the working API images
     civiphrases_images = get_images_from_civiphrases_state()
     if civiphrases_images:
         # Update the global state with civiphrases images
