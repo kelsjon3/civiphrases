@@ -351,6 +351,91 @@ def run_command():
     thread.daemon = True
     thread.start()
     
+    # Immediately fetch images from Civitai API using the working endpoint
+    # This ensures images display right away while civiphrases processes in background
+    try:
+        if username:
+            # Fetch images from user
+            source = f"user: {username}"
+            url = "https://civitai.com/api/v1/images"
+            params = {
+                'username': username,
+                'limit': min(100, int(max_items)),
+                'sort': 'Most Reactions',
+                'period': 'AllTime'
+            }
+            
+            if not include_nsfw:
+                params['nsfw'] = 'false'
+            
+            headers = {
+                'User-Agent': 'civiphrases-webui/1.0',
+                'Accept': 'application/json'
+            }
+            
+            if civitai_api_key:
+                headers['Authorization'] = f'Bearer {civitai_api_key}'
+            
+            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            items = data.get('items', [])
+            
+            images = []
+            for item in items[:int(max_items)]:
+                # Extract image data
+                image_url = item.get('url')
+                if not image_url:
+                    continue
+                
+                # Extract prompts from meta
+                meta = item.get('meta', {})
+                positive_prompt = ""
+                negative_prompt = ""
+                
+                if isinstance(meta, dict):
+                    positive_prompt = meta.get('prompt', '') or meta.get('positivePrompt', '')
+                    negative_prompt = meta.get('negativePrompt', '') or meta.get('negative', '')
+                elif isinstance(meta, str):
+                    try:
+                        meta_dict = json.loads(meta)
+                        positive_prompt = meta_dict.get('prompt', '') or meta_dict.get('positivePrompt', '')
+                        negative_prompt = meta_dict.get('negativePrompt', '') or meta.get('negative', '')
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Extract other metadata
+                created = item.get('createdAt', item.get('publishedAt', ''))
+                model_name = ""
+                if isinstance(meta, dict):
+                    model_name = meta.get('Model') or meta.get('model', '')
+                
+                images.append({
+                    'id': str(item.get('id', '')),
+                    'url': image_url,
+                    'title': item.get('name', 'Untitled'),
+                    'model': model_name,
+                    'created': created,
+                    'positive_prompt': positive_prompt.strip(),
+                    'negative_prompt': negative_prompt.strip(),
+                    'source': source
+                })
+            
+            # Update the global images state immediately
+            if images:
+                update_images_state(images, source)
+                add_log(f"Immediately fetched {len(images)} images from Civitai API", 'INFO')
+            else:
+                add_log("No images found from immediate Civitai API fetch", 'WARNING')
+                
+        elif collection_url:
+            # Similar logic for collections
+            add_log("Collection fetching not yet implemented for immediate display", 'INFO')
+            
+    except Exception as e:
+        add_log(f"Could not immediately fetch images: {e}", 'WARNING')
+    
     return redirect(url_for('index'))
 
 @app.route('/status')
@@ -388,7 +473,16 @@ def get_images():
     """Get stored images from the current job."""
     global images_state
     
-    # First try to get images from civiphrases state files
+    # First priority: return images from the working Civitai API fetch
+    if images_state['images']:
+        return jsonify({
+            'success': True,
+            'images': images_state['images'],
+            'source': images_state['source'],
+            'count': len(images_state['images'])
+        })
+    
+    # Fallback: try to get images from civiphrases state files
     civiphrases_images = get_images_from_civiphrases_state()
     if civiphrases_images:
         # Update the global state with civiphrases images
@@ -398,15 +492,6 @@ def get_images():
             'images': civiphrases_images,
             'source': 'civiphrases_state',
             'count': len(civiphrases_images)
-        })
-    
-    # Fall back to the stored images state
-    if images_state['images']:
-        return jsonify({
-            'success': True,
-            'images': images_state['images'],
-            'source': images_state['source'],
-            'count': len(images_state['images'])
         })
     
     return jsonify({
@@ -436,14 +521,35 @@ def get_images_from_civiphrases_state():
                     # Extract image data
                     item_id = item.get('item_id', f'item_{line_num}')
                     
-                    # Get the first image URL from the item (civitai items can have multiple images)
+                    # Get the first image URL from the item
+                    # Civitai items can have multiple images in different formats
                     image_url = ""
-                    if 'images' in item and item['images']:
-                        image_url = item['images'][0].get('url', '')
+                    
+                    # Try different possible image URL fields
+                    if 'images' in item and isinstance(item['images'], list) and item['images']:
+                        # First try the images array
+                        for img in item['images']:
+                            if isinstance(img, dict) and img.get('url'):
+                                image_url = img['url']
+                                break
+                    elif 'images' in item and isinstance(item['images'], dict):
+                        # Sometimes images is a dict with url field
+                        if item['images'].get('url'):
+                            image_url = item['images']['url']
                     elif 'url' in item:
+                        # Direct url field
                         image_url = item['url']
+                    elif 'image_url' in item:
+                        # Alternative field name
+                        image_url = item['image_url']
+                    
+                    # If still no image URL, try to construct one from the item ID
+                    if not image_url and item_id and item_id != f'item_{line_num}':
+                        # Try to construct a Civitai image URL
+                        image_url = f"https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/{item_id}/width=450"
                     
                     if not image_url:
+                        logger.debug(f"No image URL found for item {item_id}")
                         continue
                     
                     # Extract prompts
@@ -454,16 +560,21 @@ def get_images_from_civiphrases_state():
                     created = item.get('created', item.get('publishedAt', ''))
                     model_name = item.get('model', '')
                     
+                    # Extract title/name
+                    title = item.get('name', item.get('title', f'Item {item_id}'))
+                    
                     images.append({
                         'id': str(item_id),
                         'url': image_url,
-                        'title': item.get('name', f'Item {item_id}'),
+                        'title': title,
                         'model': model_name,
                         'created': created,
                         'positive_prompt': positive_prompt.strip(),
                         'negative_prompt': negative_prompt.strip(),
                         'source': 'civiphrases_state'
                     })
+                    
+                    logger.debug(f"Added image: {item_id} -> {image_url}")
                     
                 except json.JSONDecodeError as e:
                     logger.warning(f"Error parsing line {line_num} in {items_file}: {e}")
@@ -494,6 +605,60 @@ def debug_images():
             'recent_logs': job_state['logs'][-5:] if job_state['logs'] else []
         }
     })
+
+@app.route('/debug/civiphrases_state')
+def debug_civiphrases_state():
+    """Debug endpoint to inspect civiphrases state files."""
+    try:
+        state_dir = os.getenv('OUT_DIR', '/output') + '/state'
+        items_file = os.path.join(state_dir, 'items.jsonl')
+        
+        if not os.path.exists(items_file):
+            return jsonify({
+                'error': f'State file not found: {items_file}',
+                'state_dir': state_dir,
+                'exists': False
+            })
+        
+        # Read and parse the first few items
+        items = []
+        with open(items_file, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if i >= 3:  # Only show first 3 items
+                    break
+                try:
+                    item = json.loads(line.strip())
+                    # Show the structure of the item
+                    items.append({
+                        'line': i + 1,
+                        'item_id': item.get('item_id'),
+                        'keys': list(item.keys()),
+                        'images_structure': str(item.get('images', 'No images field')),
+                        'positive_prompt_length': len(item.get('positive', '')),
+                        'negative_prompt_length': len(item.get('negative', '')),
+                        'sample_data': {k: str(v)[:100] + '...' if len(str(v)) > 100 else str(v) 
+                                      for k, v in list(item.items())[:5]}  # First 5 fields
+                    })
+                except json.JSONDecodeError as e:
+                    items.append({
+                        'line': i + 1,
+                        'error': str(e),
+                        'raw_line': line[:200] + '...' if len(line) > 200 else line
+                    })
+        
+        return jsonify({
+            'state_dir': state_dir,
+            'items_file': items_file,
+            'file_size': os.path.getsize(items_file) if os.path.exists(items_file) else 0,
+            'items_sample': items,
+            'total_lines': sum(1 for _ in open(items_file, 'r')) if os.path.exists(items_file) else 0
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'traceback': str(e.__traceback__)
+        })
 
 @app.route('/validate_api_key', methods=['POST'])
 def validate_api_key():
@@ -587,7 +752,7 @@ def fetch_civitai_images():
                     try:
                         meta_dict = json.loads(meta)
                         positive_prompt = meta_dict.get('prompt', '') or meta_dict.get('positivePrompt', '')
-                        negative_prompt = meta_dict.get('negativePrompt', '') or meta_dict.get('negative', '')
+                        negative_prompt = meta_dict.get('negativePrompt', '') or meta.get('negative', '')
                     except json.JSONDecodeError:
                         pass
                 
@@ -654,7 +819,7 @@ def fetch_civitai_images():
                     try:
                         meta_dict = json.loads(meta)
                         positive_prompt = meta_dict.get('prompt', '') or meta_dict.get('positivePrompt', '')
-                        negative_prompt = meta_dict.get('negativePrompt', '') or meta_dict.get('negative', '')
+                        negative_prompt = meta_dict.get('negativePrompt', '') or meta.get('negative', '')
                     except json.JSONDecodeError:
                         pass
                 

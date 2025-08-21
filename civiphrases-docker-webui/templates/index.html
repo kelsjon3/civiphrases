@@ -53,11 +53,143 @@
         .form-section {
             padding: 30px;
             border-right: 1px solid #e0e0e0;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .images-section {
+            padding: 30px;
+            background: #f8f9fa;
+            max-height: 80vh;
+            overflow-y: auto;
         }
         
         .logs-section {
             padding: 30px;
             background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+            grid-column: 1 / -1;
+        }
+        
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .image-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .image-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        }
+        
+        .image-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            display: block;
+        }
+        
+        .image-card .image-info {
+            padding: 12px;
+        }
+        
+        .image-card .image-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+        
+        .image-card .image-meta {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        
+        .prompt-section {
+            margin-top: 12px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .prompt-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .prompt-text {
+            font-size: 12px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            max-height: 80px;
+            overflow-y: auto;
+            padding: 4px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .prompt-text.positive {
+            border-left: 3px solid #28a745;
+        }
+        
+        .prompt-text.negative {
+            border-left: 3px solid #dc3545;
+        }
+        
+        .images-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .images-count {
+            font-size: 14px;
+            color: #6c757d;
+        }
+        
+        .no-images {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        .loading-images {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6c757d;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
         
         .form-group {
@@ -80,7 +212,12 @@
             transition: border-color 0.3s ease;
         }
         
-        .form-group input:focus {
+        .form-group select {
+            background-color: white;
+            cursor: pointer;
+        }
+        
+        .form-group select:focus {
             outline: none;
             border-color: #667eea;
         }
@@ -93,6 +230,18 @@
         .checkbox-group {
             display: flex;
             align-items: center;
+        }
+        
+        .logs-controls {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .logs-controls .checkbox-group {
+            margin: 0;
         }
         
         .btn {
@@ -337,6 +486,20 @@
                     </div>
                     
                     <div class="form-group">
+                        <label for="selected_model">TGW Model Selection</label>
+                        <div id="model-status" style="margin-bottom: 8px; padding: 8px; border-radius: 6px; background: #f8f9fa; border: 1px solid #e9ecef;">
+                            <span id="model-status-text">Click "Detect Model" to check currently loaded model</span>
+                        </div>
+                        <select id="selected_model" name="selected_model">
+                            <option value="">Auto-select (default)</option>
+                        </select>
+                        <div class="help-text">Detect the currently loaded model or manually select one</div>
+                        <button type="button" class="btn btn-secondary" id="refresh-models-btn" onclick="refreshModels()" style="margin-top: 8px; padding: 8px 16px; font-size: 12px;">
+                            🔍 Detect Model
+                        </button>
+                    </div>
+                    
+                    <div class="form-group">
                         <div class="checkbox-group">
                             <input type="checkbox" id="include_nsfw" name="include_nsfw">
                             <label for="include_nsfw">Include NSFW Content</label>
@@ -354,6 +517,29 @@
                 </form>
             </div>
             
+            <div class="images-section">
+                <div class="images-header">
+                    <h3>🎨 Civitai Images</h3>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="images-count" id="images-count">No images loaded</span>
+                        <button type="button" class="btn btn-primary" onclick="fetchCivitaiImages()" style="padding: 6px 12px; font-size: 12px;">
+                            📥 Fetch Images
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="loadImages()" style="padding: 6px 12px; font-size: 12px;">
+                            🔄 Refresh Display
+                        </button>
+                    </div>
+                </div>
+                <div class="image-grid" id="image-grid">
+                    <div class="no-images">
+                        <p>📸 Use the form or click "Fetch Images" to load images from Civitai</p>
+                        <p style="font-size: 12px; margin-top: 10px; opacity: 0.7;">
+                            Images will appear here with their prompts displayed below
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             <div class="logs-section">
                 <div class="status-indicator 
                     {% if job_state.running %}status-running
@@ -370,6 +556,13 @@
                     {% else %}
                         💤 Ready to Run
                     {% endif %}
+                </div>
+                
+                <div class="logs-controls">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="auto-refresh" name="auto-refresh" checked>
+                        <label for="auto-refresh">Auto-refresh logs</label>
+                    </div>
                 </div>
                 
                 <h3>📝 Logs</h3>
@@ -405,7 +598,9 @@
             'max_items',
             'tgw_base_url',
             'tgw_api_key',
-            'include_nsfw'
+            'include_nsfw',
+            'selected_model',
+            'auto-refresh'
         ];
         
         // Save form data to localStorage
@@ -539,51 +734,57 @@
                 .then(data => {
                     // Update status indicator
                     const statusEl = document.querySelector('.status-indicator');
-                    const runBtn = document.getElementById('run-btn');
-                    
-                    statusEl.className = 'status-indicator ';
-                    
-                    if (data.running) {
-                        statusEl.className += 'status-running';
-                        statusEl.innerHTML = '🔄 Job Running...';
-                        runBtn.disabled = true;
-                        runBtn.innerHTML = '🔄 Running...';
-                    } else if (data.success === true) {
-                        statusEl.className += 'status-success';
-                        statusEl.innerHTML = '✅ Job Completed Successfully';
-                        runBtn.disabled = false;
-                        runBtn.innerHTML = '🚀 Run Civiphrases';
-                    } else if (data.success === false) {
-                        statusEl.className += 'status-error';
-                        statusEl.innerHTML = '❌ Job Failed';
-                        runBtn.disabled = false;
-                        runBtn.innerHTML = '🚀 Run Civiphrases';
-                    } else {
-                        statusEl.className += 'status-idle';
-                        statusEl.innerHTML = '💤 Ready to Run';
-                        runBtn.disabled = false;
-                        runBtn.innerHTML = '🚀 Run Civiphrases';
+                    if (statusEl) {
+                        statusEl.className = 'status-indicator ';
+                        
+                        if (data.running) {
+                            statusEl.className += 'status-running';
+                            statusEl.innerHTML = '🔄 Job Running...';
+                            
+                            // Start auto-refresh when job starts
+                            // if (!autoRefreshInterval) { // Removed auto-refresh logic
+                            //     onJobStart();
+                            // }
+                        } else if (data.success === true) {
+                            statusEl.className += 'status-success';
+                            statusEl.innerHTML = '✅ Job Completed Successfully';
+                            
+                            // Stop auto-refresh when job completes
+                            // onJobComplete(); // Removed auto-refresh logic
+                            
+                            // Auto-refresh images one more time to get final results
+                            setTimeout(loadImages, 1000);
+                        } else if (data.success === false) {
+                            statusEl.className += 'status-error';
+                            statusEl.innerHTML = '❌ Job Failed';
+                            
+                            // Stop auto-refresh when job fails
+                            // onJobComplete(); // Removed auto-refresh logic
+                        } else {
+                            statusEl.className += 'status-idle';
+                            statusEl.innerHTML = '💤 Ready to Run';
+                            
+                            // Stop auto-refresh when no job is running
+                            // onJobComplete(); // Removed auto-refresh logic
+                        }
                     }
                     
                     // Update logs
-                    const logsContainer = document.getElementById('logs-container');
-                    if (data.logs && data.logs.length > 0) {
-                        logsContainer.innerHTML = data.logs.map(log => 
-                            `<div class="log-entry">
-                                <span class="log-timestamp">${log.timestamp}</span>
-                                <span class="log-level-${log.level}">[${log.level}]</span>
-                                ${log.message}
+                    const logsEl = document.getElementById('logs-container');
+                    if (logsEl && data.logs) {
+                        logsEl.innerHTML = data.logs.map(log => 
+                            `<div class="log-entry ${log.level.toLowerCase()}">
+                                <span class="timestamp">${log.timestamp}</span>
+                                <span class="level">[${log.level}]</span>
+                                <span class="message">${log.message}</span>
                             </div>`
                         ).join('');
-                        
-                        // Auto-scroll to bottom
-                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                        logsEl.scrollTop = logsEl.scrollHeight;
                     }
-                    
-                    // Update button states
-                    updateButtonStates();
                 })
-                .catch(console.error);
+                .catch(error => {
+                    console.error('Error refreshing status:', error);
+                });
         }
         
         // Validate Civitai API key and display username
@@ -655,6 +856,130 @@
                 });
         }
 
+        // Detect currently loaded model from TGW using test inference
+        async function refreshModels() {
+            const tgwUrl = document.getElementById('tgw_base_url').value.trim();
+            const tgwApiKey = document.getElementById('tgw_api_key').value.trim();
+            const modelSelect = document.getElementById('selected_model');
+            const refreshBtn = document.getElementById('refresh-models-btn');
+            const modelStatus = document.getElementById('model-status');
+            const modelStatusText = document.getElementById('model-status-text');
+            
+            if (!tgwUrl) {
+                alert('Please enter a TGW URL first');
+                return;
+            }
+            
+            // Show loading state
+            refreshBtn.innerHTML = '🔍 Detecting...';
+            refreshBtn.disabled = true;
+            modelStatusText.textContent = 'Detecting currently loaded model (this may take a moment)...';
+            
+            try {
+                // Use the new, more accurate detection endpoint
+                const response = await fetch('/detect_loaded_model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        tgw_base_url: tgwUrl,
+                        tgw_api_key: tgwApiKey
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.loaded_model) {
+                    const loadedModel = data.loaded_model;
+                    
+                    // Update the model status display with more detailed info
+                    let statusColor = '#d4edda';
+                    let borderColor = '#c3e6cb';
+                    let statusIcon = '✅';
+                    
+                    if (loadedModel.status === 'confirmed_loaded') {
+                        statusColor = '#d1ecf1';
+                        borderColor = '#bee5eb';
+                        statusIcon = '🎯';
+                    } else if (loadedModel.status === 'fallback_loaded') {
+                        statusColor = '#fff3cd';
+                        borderColor = '#ffeaa7';
+                        statusIcon = '⚠️';
+                    } else if (loadedModel.status === 'assumed_loaded') {
+                        statusColor = '#fff3cd';
+                        borderColor = '#ffeaa7';
+                        statusIcon = '⚠️';
+                    }
+                    
+                    modelStatus.style.background = statusColor;
+                    modelStatus.style.borderColor = borderColor;
+                    
+                    let statusText = `<strong>${statusIcon} Currently Loaded:</strong> ${loadedModel.name}<br>`;
+                    statusText += `<small>Status: ${loadedModel.status.replace('_', ' ')}`;
+                    
+                    if (loadedModel.source) {
+                        statusText += ` (${loadedModel.source})`;
+                    }
+                    
+                    statusText += '</small>';
+                    modelStatusText.innerHTML = statusText;
+                    
+                    // Update the model selection dropdown
+                    modelSelect.innerHTML = '<option value="">Auto-select (default)</option>';
+                    
+                    // Add the loaded model as an option
+                    const option = document.createElement('option');
+                    option.value = loadedModel.full_id;
+                    option.textContent = `${loadedModel.name} (currently loaded)`;
+                    option.selected = true; // Auto-select the loaded model
+                    modelSelect.appendChild(option);
+                    
+                    // Save the form data
+                    saveFormData();
+                    
+                    // Show success message
+                    refreshBtn.innerHTML = '✅ Detected!';
+                    setTimeout(() => {
+                        refreshBtn.innerHTML = '🔍 Detect Model';
+                    }, 2000);
+                    
+                    console.log(`Detected loaded model: ${loadedModel.name} (${loadedModel.status})`);
+                } else {
+                    // No loaded model detected
+                    modelStatus.style.background = '#fff3cd';
+                    modelStatus.style.borderColor = '#ffeaa7';
+                    modelStatusText.innerHTML = `
+                        <strong>⚠️ No Model Loaded:</strong><br>
+                        <small>${data.error || 'No currently loaded model detected'}</small>
+                    `;
+                    
+                    // Clear the model selection
+                    modelSelect.innerHTML = '<option value="">Auto-select (default)</option>';
+                    
+                    throw new Error(data.error || 'No loaded model detected');
+                }
+                
+            } catch (error) {
+                console.error('Error detecting model:', error);
+                
+                // Show error in status
+                modelStatus.style.background = '#f8d7da';
+                modelStatus.style.borderColor = '#f5c6cb';
+                modelStatusText.innerHTML = `
+                    <strong>❌ Error:</strong><br>
+                    <small>${error.message}</small>
+                `;
+                
+                refreshBtn.innerHTML = '❌ Error';
+                setTimeout(() => {
+                    refreshBtn.innerHTML = '🔍 Detect Model';
+                }, 2000);
+            } finally {
+                refreshBtn.disabled = false;
+            }
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             // Load version info
@@ -665,6 +990,13 @@
             
             // Initialize button states
             updateButtonStates();
+            
+            // Auto-detect TGW model if URL is available
+            const tgwUrl = document.getElementById('tgw_base_url').value.trim();
+            if (tgwUrl) {
+                console.log('Auto-detecting TGW model on page load');
+                setTimeout(refreshModels, 1000); // Delay to ensure page is fully loaded
+            }
             
             // Add API key validation
             const apiKeyField = document.getElementById('civitai_api_key');
@@ -695,26 +1027,92 @@
                 }
             });
             
-            // Form validation
-            document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
-                const username = document.getElementById('username').value.trim();
-                const collectionUrl = document.getElementById('collection_url').value.trim();
+            // Special handling for auto-refresh checkbox
+            const autoRefreshCheckbox = document.getElementById('auto-refresh');
+            if (autoRefreshCheckbox) {
+                autoRefreshCheckbox.addEventListener('change', function() {
+                    saveFormData();
+                    // If auto-refresh is disabled, stop the current refresh interval
+                    // if (!this.checked) { // Removed auto-refresh logic
+                    //     console.log('Auto-refresh disabled');
+                    // } else { // Removed auto-refresh logic
+                    //     console.log('Auto-refresh enabled');
+                    // }
+                });
+            }
+            
+                    // Fetch images from Civitai
+        async function fetchCivitaiImages() {
+            const username = document.getElementById('username').value.trim();
+            const collectionUrl = document.getElementById('collection_url').value.trim();
+            const maxItems = document.getElementById('max_items').value.trim();
+            const includeNsfw = document.getElementById('include_nsfw').checked;
+            const civitaiApiKey = document.getElementById('civitai_api_key').value.trim();
+            
+            if (!username && !collectionUrl) {
+                alert('Please provide either a username or collection URL.');
+                return;
+            }
+            
+            if (username && collectionUrl) {
+                alert('Please provide either username OR collection URL, not both.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/fetch_civitai_images', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        collection_url: collectionUrl,
+                        max_items: maxItems,
+                        include_nsfw: includeNsfw,
+                        civitai_api_key: civitaiApiKey
+                    })
+                });
                 
-                if (!username && !collectionUrl) {
-                    e.preventDefault();
-                    alert('Please provide either a username or collection URL.');
-                    return;
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log(`Successfully fetched ${data.count} images from ${data.source}`);
+                    // Images are now stored in the global state, so loadImages() will work
+                    loadImages();
+                } else {
+                    console.error('Failed to fetch images:', data.error);
+                    alert(`Failed to fetch images: ${data.error}`);
                 }
-                
-                if (username && collectionUrl) {
-                    e.preventDefault();
-                    alert('Please provide either username OR collection URL, not both.');
-                    return;
-                }
-                
-                // Save form data before submit
-                saveFormData();
-            });
+            } catch (error) {
+                console.error('Error fetching images:', error);
+                alert(`Error fetching images: ${error.message}`);
+            }
+        }
+        
+        // Form validation
+        document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
+            const username = document.getElementById('username').value.trim();
+            const collectionUrl = document.getElementById('collection_url').value.trim();
+            
+            if (!username && !collectionUrl) {
+                e.preventDefault();
+                alert('Please provide either a username or collection URL.');
+                return;
+            }
+            
+            if (username && collectionUrl) {
+                e.preventDefault();
+                alert('Please provide either username OR collection URL, not both.');
+                return;
+            }
+            
+            // Save form data before submit
+            saveFormData();
+            
+            // Fetch images immediately after form submission
+            setTimeout(fetchCivitaiImages, 1000);
+        });
             
             // Clear the other field when one is filled
             document.getElementById('username').addEventListener('input', function() {
@@ -732,8 +1130,143 @@
             });
         });
         
+        // Load and display images from Civitai
+        async function loadImages() {
+            const imageGrid = document.getElementById('image-grid');
+            const imagesCount = document.getElementById('images-count');
+            
+            console.log('loadImages() called');
+            
+            try {
+                // Show loading state
+                imageGrid.innerHTML = `
+                    <div class="loading-images">
+                        <div class="loading-spinner"></div>
+                        Loading images...
+                    </div>
+                `;
+                
+                console.log('Fetching images from /get_images...');
+                const response = await fetch('/get_images');
+                const data = await response.json();
+                
+                console.log('Response from /get_images:', data);
+                
+                if (data.success && data.images && data.images.length > 0) {
+                    console.log(`Displaying ${data.images.length} images`);
+                    // Display images
+                    const imageHtml = data.images.map(image => `
+                        <div class="image-card">
+                            <img src="${image.url}" alt="${image.title || 'Civitai Image'}" 
+                                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Vucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlPC90ZXh0Pjwvc3ZnPg=='">
+                            <div class="image-info">
+                                <div class="image-title">${image.title || 'Untitled'}</div>
+                                <div class="image-meta">
+                                    ${image.model ? `Model: ${image.model}<br>` : ''}
+                                    ${image.created ? `Created: ${new Date(image.created).toLocaleDateString()}` : ''}
+                                </div>
+                                ${image.positive_prompt ? `
+                                    <div class="prompt-section">
+                                        <div class="prompt-label">Positive Prompt:</div>
+                                        <div class="prompt-text positive">${image.positive_prompt}</div>
+                                    </div>
+                                ` : ''}
+                                ${image.negative_prompt ? `
+                                    <div class="prompt-section">
+                                        <div class="prompt-label">Negative Prompt:</div>
+                                        <div class="prompt-text negative">${image.negative_prompt}</div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                    imageGrid.innerHTML = imageHtml;
+                    imagesCount.textContent = `${data.images.length} images loaded`;
+                } else {
+                    console.log('No images found:', data.message);
+                    // No images
+                    imageGrid.innerHTML = `
+                        <div class="no-images">
+                            ${data.message || 'No images found'}
+                        </div>
+                    `;
+                    imagesCount.textContent = 'No images';
+                }
+            } catch (error) {
+                console.error('Error loading images:', error);
+                imageGrid.innerHTML = `
+                    <div class="no-images">
+                        Error loading images: ${error.message}
+                    </div>
+                `;
+                imagesCount.textContent = 'Error loading images';
+            }
+        }
+        
+        // Refresh images when job completes
+        function refreshImages() {
+            // Only refresh if we have a successful job completion
+            const statusEl = document.querySelector('.status-indicator');
+            if (statusEl && statusEl.classList.contains('status-success')) {
+                loadImages();
+            }
+        }
+        
+        // Auto-refresh images during processing
+        // let autoRefreshInterval = null; // Removed auto-refresh logic
+        
+        // function startAutoRefresh() { // Removed auto-refresh logic
+        //     if (autoRefreshInterval) { // Removed auto-refresh logic
+        //         clearInterval(autoRefreshInterval); // Removed auto-refresh logic
+        //     } // Removed auto-refresh logic
+        //     autoRefreshInterval = setInterval(checkForNewImages, 10000); // Check every 10 seconds // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
+        
+        // function stopAutoRefresh() { // Removed auto-refresh logic
+        //     if (autoRefreshInterval) { // Removed auto-refresh logic
+        //         clearInterval(autoRefreshInterval); // Removed auto-refresh logic
+        //         autoRefreshInterval = null; // Removed auto-refresh logic
+        //     } // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
+        
+        // async function checkForNewImages() { // Removed auto-refresh logic
+        //     try { // Removed auto-refresh logic
+        //         const response = await fetch('/check_for_new_images'); // Removed auto-refresh logic
+        //         const data = await response.json(); // Removed auto-refresh logic
+        //         // Removed auto-refresh logic
+        //         if (data.success && data.has_new_images) { // Removed auto-refresh logic
+        //             console.log(`Found ${data.count} new images, refreshing display...`); // Removed auto-refresh logic
+        //             loadImages(); // Refresh the image display // Removed auto-refresh logic
+        //         } // Removed auto-refresh logic
+        //     } catch (error) { // Removed auto-refresh logic
+        //         console.error('Error checking for new images:', error); // Removed auto-refresh logic
+        //     } // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
+        
+        // Start auto-refresh when a job starts // Removed auto-refresh logic
+        // function onJobStart() { // Removed auto-refresh logic
+        //     startAutoRefresh(); // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
+        
+        // Stop auto-refresh when a job completes // Removed auto-refresh logic
+        // function onJobComplete() { // Removed auto-refresh logic
+        //     stopAutoRefresh(); // Removed auto-refresh logic
+        // } // Removed auto-refresh logic
+        
         // Refresh every 2 seconds
         setInterval(refreshStatus, 2000);
+        
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load any existing images
+            loadImages();
+        });
+        
+        // Add manual refresh button functionality
+        document.getElementById('refresh-display').addEventListener('click', function() {
+            loadImages();
+        });
     </script>
 </body>
 </html>
