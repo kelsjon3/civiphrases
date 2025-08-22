@@ -785,37 +785,70 @@
         }
         
         // Auto-refresh logs when job is running
+        let statusRefreshInterval = null;
+        
+        function startStatusRefresh() {
+            if (statusRefreshInterval) {
+                clearInterval(statusRefreshInterval);
+            }
+            statusRefreshInterval = setInterval(refreshStatus, 2000);
+            console.log('Started status refresh interval');
+        }
+        
+        function stopStatusRefresh() {
+            if (statusRefreshInterval) {
+                clearInterval(statusRefreshInterval);
+                statusRefreshInterval = null;
+                console.log('Stopped status refresh interval');
+            }
+        }
+        
         function refreshStatus() {
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
                     console.log('Status update received:', data);
+                    console.log('Status indicator element:', document.querySelector('.status-indicator'));
                     
                     // Update status indicator
                     const statusEl = document.querySelector('.status-indicator');
                     if (statusEl) {
+                        console.log('Updating status indicator with:', data);
                         statusEl.className = 'status-indicator ';
                         
                         if (data.running === true) {
                             statusEl.className += 'status-running';
                             statusEl.innerHTML = '🔄 Job Running...';
+                            console.log('Set status to: Job Running...');
                         } else if (data.running === false && data.success === true) {
                             statusEl.className += 'status-success';
                             statusEl.innerHTML = '✅ Job Completed Successfully';
+                            console.log('Set status to: Job Completed Successfully');
+                            
+                            // Stop auto-refresh when job completes successfully
+                            stopStatusRefresh();
                             
                             // Don't auto-refresh images when job completes - keep current images
                             // The images are already displayed and working
                         } else if (data.running === false && data.success === false) {
                             statusEl.className += 'status-error';
                             statusEl.innerHTML = '❌ Job Failed';
+                            console.log('Set status to: Job Failed');
+                            
+                            // Stop auto-refresh when job fails
+                            stopStatusRefresh();
                         } else if (data.running === false && data.success === null) {
                             statusEl.className += 'status-idle';
                             statusEl.innerHTML = '💤 Ready to Run';
+                            console.log('Set status to: Ready to Run');
                         } else {
                             // Fallback for unexpected states
                             statusEl.className += 'status-idle';
                             statusEl.innerHTML = `💤 Status: running=${data.running}, success=${data.success}`;
+                            console.log('Set status to fallback:', `running=${data.running}, success=${data.success}`);
                         }
+                    } else {
+                        console.error('Status indicator element not found!');
                     }
                     
                     // Update logs
@@ -1090,7 +1123,11 @@
                 });
             }
             
-                    // Fetch images from Civitai
+            // Get initial status
+            refreshStatus();
+        });
+        
+        // Fetch images from Civitai
         async function fetchCivitaiImages() {
             const username = document.getElementById('username').value.trim();
             const collectionUrl = document.getElementById('collection_url').value.trim();
@@ -1177,6 +1214,7 @@
                 console.log('Response from /run:', data);
                 if (data.success) {
                     // Job started successfully, refresh status to show "Running..."
+                    startStatusRefresh(); // Start status refresh when job starts
                     refreshStatus();
                     // Fetch images after a delay for immediate display
                     setTimeout(fetchCivitaiImages, 1000);
@@ -1343,13 +1381,13 @@
         //     stopAutoRefresh(); // Removed auto-refresh logic
         // } // Removed auto-refresh logic
         
-        // Refresh every 2 seconds
-        setInterval(refreshStatus, 2000);
-        
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
             // Load any existing images
             loadImages();
+            
+            // Start status refresh after page is loaded
+            startStatusRefresh();
         });
         
         // Add continue fetch button functionality

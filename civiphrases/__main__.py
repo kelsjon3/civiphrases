@@ -50,7 +50,8 @@ def cli(verbose: bool):
 @click.option('--max-items', default=200, help='Maximum number of items to fetch')
 @click.option('--include-nsfw', is_flag=True, help='Include NSFW content')
 @click.option('--dry-run', is_flag=True, help='Print stats without writing files')
-def fetch(user: Optional[str], collection: Optional[str], max_items: int, include_nsfw: bool, dry_run: bool):
+@click.option('--replace', is_flag=True, help='Replace existing items instead of incremental update')
+def fetch(user: Optional[str], collection: Optional[str], max_items: int, include_nsfw: bool, dry_run: bool, replace: bool):
     """Fetch prompts from Civitai and update local cache."""
     logger = logging.getLogger(__name__)
     
@@ -68,9 +69,13 @@ def fetch(user: Optional[str], collection: Optional[str], max_items: int, includ
     try:
         client = CivitaiClient()
         
-        # Load existing items
-        existing_items = load_existing_items(config.items_file)
-        logger.info(f"Loaded {len(existing_items)} existing items")
+        # Load existing items (only if not replacing)
+        if not replace:
+            existing_items = load_existing_items(config.items_file)
+            logger.info(f"Loaded {len(existing_items)} existing items")
+        else:
+            existing_items = {}
+            logger.info("Replace mode: ignoring existing items")
         
         # Fetch new items
         new_items = []
@@ -91,7 +96,7 @@ def fetch(user: Optional[str], collection: Optional[str], max_items: int, includ
             checksum = calculate_item_checksum(item["positive"], item["negative"])
             item["checksum"] = checksum
             
-            if item_id in existing_items:
+            if not replace and item_id in existing_items:
                 # Check if content has changed
                 if existing_items[item_id].get("checksum") != checksum:
                     logger.info(f"Item {item_id} has been updated")
@@ -104,9 +109,16 @@ def fetch(user: Optional[str], collection: Optional[str], max_items: int, includ
         total_fetched = len(new_items) + len(updated_items)
         
         if not dry_run:
-            # Save new and updated items
-            if new_items or updated_items:
-                save_items_incrementally(config.items_file, new_items + updated_items)
+            # Save items
+            if replace:
+                # Replace entire file
+                if new_items:
+                    save_items_incrementally(config.items_file, new_items, replace=True)
+                    logger.info(f"Replaced items file with {len(new_items)} new items")
+            else:
+                # Incremental update
+                if new_items or updated_items:
+                    save_items_incrementally(config.items_file, new_items + updated_items, replace=False)
         
         # Print summary
         click.echo(f"\nFetch Summary:")
@@ -277,7 +289,8 @@ def refresh(
                   collection=collection, 
                   max_items=max_items, 
                   include_nsfw=include_nsfw,
-                  dry_run=dry_run)
+                  dry_run=dry_run,
+                  replace=True)
         
         # Then run build
         click.echo("\n=== BUILD PHASE ===")

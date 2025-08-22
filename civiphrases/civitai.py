@@ -154,7 +154,7 @@ class CivitaiClient:
         url = f"{config.civitai_base_url}/images"
         params = {
             "username": username,
-            "limit": min(100, max_items),  # API max is usually 100
+            "limit": 100,  # API max is 100, we'll paginate to get more
             "sort": "Most Reactions",
             "period": "AllTime",
         }
@@ -165,11 +165,13 @@ class CivitaiClient:
         fetched = 0
         page = 1
         
+        logger.info(f"Starting pagination: target {max_items} items, fetching 100 per page")
+        
         while fetched < max_items:
             current_params = params.copy()
             current_params["page"] = page
             
-            logger.debug(f"Fetching page {page} for user {username}")
+            logger.info(f"Fetching page {page} for user {username} (have {fetched}/{max_items} items)")
             
             data = self._make_request(url, current_params)
             if not data or "items" not in data:
@@ -180,6 +182,8 @@ class CivitaiClient:
             if not items:
                 logger.info("No more items available")
                 break
+            
+            logger.info(f"Page {page} returned {len(items)} items")
             
             for item in items:
                 if fetched >= max_items:
@@ -199,9 +203,10 @@ class CivitaiClient:
             
             # If we got fewer items than requested, we've reached the end
             if len(items) < params["limit"]:
+                logger.info(f"Reached end of available items (got {len(items)} < {params['limit']})")
                 break
         
-        logger.info(f"Fetched {fetched} items for user {username}")
+        logger.info(f"Fetched {fetched} items for user {username} across {page-1} pages")
     
     def fetch_collection_images(
         self, 
@@ -227,18 +232,20 @@ class CivitaiClient:
         # Now fetch images from the collection
         images_url = f"{config.civitai_base_url}/collections/{collection_id}/items"
         params = {
-            "limit": min(100, max_items),
+            "limit": 100,  # API max is 100, we'll paginate to get more
             "type": "image",
         }
         
         fetched = 0
         page = 1
         
+        logger.info(f"Starting collection pagination: target {max_items} items, fetching 100 per page")
+        
         while fetched < max_items:
             current_params = params.copy()
             current_params["page"] = page
             
-            logger.debug(f"Fetching page {page} for collection {collection_id}")
+            logger.info(f"Fetching page {page} for collection {collection_id} (have {fetched}/{max_items} items)")
             
             data = self._make_request(images_url, current_params)
             if not data or "items" not in data:
@@ -250,18 +257,17 @@ class CivitaiClient:
                 logger.info("No more items available")
                 break
             
+            logger.info(f"Page {page} returned {len(items)} items")
+            
             for item in items:
                 if fetched >= max_items:
                     break
                 
-                # Extract the actual image data
-                image_data = item.get("data", item)
-                
                 # Skip NSFW if not included
-                if not include_nsfw and image_data.get("nsfw"):
+                if not include_nsfw and item.get("nsfw"):
                     continue
                 
-                prompt_data = self._extract_prompt_data(image_data)
+                prompt_data = self._extract_prompt_data(item)
                 prompt_data["source"] = {"type": "collection", "identifier": collection_id}
                 
                 yield prompt_data
@@ -271,9 +277,10 @@ class CivitaiClient:
             
             # If we got fewer items than requested, we've reached the end
             if len(items) < params["limit"]:
+                logger.info(f"Reached end of available items (got {len(items)} < {params['limit']})")
                 break
         
-        logger.info(f"Fetched {fetched} items for collection {collection_id}")
+        logger.info(f"Fetched {fetched} items for collection {collection_id} across {page-1} pages")
 
 
 def calculate_item_checksum(positive: str, negative: str) -> str:
@@ -300,10 +307,17 @@ def load_existing_items(items_file: str) -> Dict[str, Dict]:
     return items
 
 
-def save_items_incrementally(items_file: str, new_items: List[Dict]):
-    """Save new items to JSONL file incrementally."""
+def save_items_incrementally(items_file: str, new_items: List[Dict], replace: bool = False):
+    """Save new items to JSONL file incrementally or replace entirely.
+    
+    Args:
+        items_file: Path to the JSONL file
+        new_items: List of items to save
+        replace: If True, replace entire file. If False, append to existing file.
+    """
     try:
-        with open(items_file, 'a', encoding='utf-8') as f:
+        mode = 'w' if replace else 'a'
+        with open(items_file, mode, encoding='utf-8') as f:
             for item in new_items:
                 f.write(json.dumps(item, ensure_ascii=False) + '\n')
         
