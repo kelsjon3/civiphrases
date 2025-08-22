@@ -18,6 +18,7 @@ class Config:
         # Text Generation WebUI configuration
         self.tgw_base_url: str = os.getenv("TGW_BASE_URL", "http://127.0.0.1:5001/v1")
         self.tgw_api_key: str = os.getenv("TGW_API_KEY", "local")
+        self.tgw_model_name: Optional[str] = os.getenv("TGW_MODEL_NAME")
         
         # Output directory
         self.out_dir: str = os.getenv("OUT_DIR", "./out")

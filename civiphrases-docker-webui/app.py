@@ -14,6 +14,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 import json
 import logging
 import requests
+import traceback
 
 app = Flask(__name__)
 
@@ -31,6 +32,9 @@ job_state = {
     'command': None
 }
 
+# Thread lock for job_state access
+job_state_lock = threading.Lock()
+
 # Global state for storing images
 images_state = {
     'images': [],
@@ -38,9 +42,15 @@ images_state = {
     'source': None
 }
 
-def clear_logs():
-    """Clear the job logs and reset state."""
-    global job_state, images_state
+def reset_job_state():
+    """Reset job state to initial values."""
+    global job_state
+    
+    logger.info("reset_job_state() called")
+    
+    # Note: This function is called from clear_logs() which already holds the lock
+    # So we don't need to acquire it again
+    logger.info("reset_job_state() - resetting job_state")
     job_state = {
         'running': False,
         'logs': [],
@@ -49,22 +59,43 @@ def clear_logs():
         'success': None,
         'command': None
     }
+    logger.info("reset_job_state() - job_state reset completed")
+    logger.info("reset_job_state() - function completed")
+
+def clear_logs():
+    """Clear the job logs and reset state."""
+    global job_state, images_state
+    
+    logger.info("clear_logs() called - about to acquire lock")
+    
+    with job_state_lock:
+        logger.info("clear_logs() - lock acquired, calling reset_job_state")
+        reset_job_state()
+        logger.info("clear_logs() - reset_job_state completed")
+    
+    logger.info("clear_logs() - lock released")
+    
     # Also clear images when starting a new job
+    logger.info("clear_logs() - clearing images_state")
     images_state = {
         'images': [],
         'last_updated': None,
         'source': None
     }
+    logger.info("clear_logs() - completed successfully")
 
 def add_log(message, level='INFO'):
     """Add a log message with timestamp."""
     global job_state
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    job_state['logs'].append({
-        'timestamp': timestamp,
-        'level': level,
-        'message': message
-    })
+    
+    with job_state_lock:
+        job_state['logs'].append({
+            'timestamp': timestamp,
+            'level': level,
+            'message': message
+        })
+    
     logger.info(f"[{level}] {message}")
 
 def update_images_state(images, source):
@@ -173,12 +204,18 @@ def run_civiphrases_command(command, env_vars):
     """Run civiphrases command in a separate thread."""
     global job_state
     
+    logger.info("=== run_civiphrases_command called ===")
+    logger.info(f"Command: {command}")
+    logger.info(f"Environment: {env_vars}")
+    
     try:
-        job_state['running'] = True
-        job_state['start_time'] = datetime.now()
-        job_state['command'] = command
-        job_state['success'] = None
+        with job_state_lock:
+            job_state['running'] = True
+            job_state['start_time'] = datetime.now()
+            job_state['command'] = command
+            job_state['success'] = None
         
+        logger.info("Job state updated to running=True")
         add_log(f"Starting command: {' '.join(command)}")
         add_log(f"Environment: {env_vars}")
         
@@ -205,27 +242,238 @@ def run_civiphrases_command(command, env_vars):
         
         if process.returncode == 0:
             add_log("Command completed successfully!", 'SUCCESS')
-            job_state['success'] = True
-            
-            # Extract images from logs and update images state
-            logger.info(f"Attempting to extract images from {len(job_state['logs'])} log entries")
-            images, source = capture_civitai_images_from_logs(job_state['logs'])
-            logger.info(f"Extracted {len(images)} images from source: {source}")
-            if images:
-                update_images_state(images, source)
-                logger.info(f"Successfully updated images state with {len(images)} images")
-            else:
-                logger.warning("No images were extracted from logs")
+            with job_state_lock:
+                job_state['success'] = True
+                
+                # Extract images from logs and update images state
+                logger.info(f"Attempting to extract images from {len(job_state['logs'])} log entries")
+                images, source = capture_civitai_images_from_logs(job_state['logs'])
+                logger.info(f"Extracted {len(images)} images from source: {source}")
+                if images:
+                    update_images_state(images, source)
+                    logger.info(f"Successfully updated images state with {len(images)} images")
+                else:
+                    logger.warning("No images were extracted from logs")
         else:
             add_log(f"Command failed with exit code {process.returncode}", 'ERROR')
-            job_state['success'] = False
+            with job_state_lock:
+                job_state['success'] = False
             
     except Exception as e:
         add_log(f"Error running command: {str(e)}", 'ERROR')
-        job_state['success'] = False
+        with job_state_lock:
+            job_state['success'] = False
     finally:
-        job_state['running'] = False
-        job_state['end_time'] = datetime.now()
+        with job_state_lock:
+            job_state['running'] = False
+            job_state['end_time'] = datetime.now()
+            add_log(f"Job state updated: running={job_state['running']}, success={job_state['success']}, end_time={job_state['end_time']}", 'INFO')
+            logger.info(f"Job completed. Final state: {job_state}")
+            
+            # Debug: Log the exact state after completion
+            logger.info(f"Job state keys after completion: {list(job_state.keys())}")
+            logger.info(f"Job state 'running' field value: {job_state.get('running', 'MISSING')}")
+            logger.info(f"Job state 'success' field value: {job_state.get('success', 'MISSING')}")
+
+def fetch_images_with_pagination(username, max_items, include_nsfw, civitai_api_key, batch_size=300, resume_from_page=None, is_collection=False):
+    """Fetch images from Civitai in batches with persistent state tracking.
+    
+    Args:
+        username: Civitai username or collection ID
+        max_items: Total target images (can be very large)
+        include_nsfw: Whether to include NSFW content
+        civitai_api_key: API key for authentication
+        batch_size: How many images to fetch per batch (default: 300 = 3 pages)
+        resume_from_page: Resume from specific page (for continuing later)
+        is_collection: True if fetching from a collection, False for user
+    """
+    try:
+        source = f"user: {username}" if not is_collection else f"collection: {username}"
+        url = "https://civitai.com/api/v1/images"
+        
+        headers = {
+            'User-Agent': 'civiphrases-webui/1.0',
+            'Accept': 'application/json'
+        }
+        
+        if civitai_api_key:
+            headers['Authorization'] = f'Bearer {civitai_api_key}'
+        
+        all_images = []
+        page = resume_from_page if resume_from_page else 1
+        page_size = 100  # Civitai API max per page
+        batch_count = 0
+        
+        # Calculate how many pages we need for this batch
+        pages_needed = (batch_size + page_size - 1) // page_size
+        
+        add_log(f"Starting batch fetch for {'collection' if is_collection else 'user'} {username}", 'INFO')
+        add_log(f"Batch size: {batch_size} images ({pages_needed} pages)", 'INFO')
+        add_log(f"Starting from page: {page}", 'INFO')
+        
+        while len(all_images) < batch_size:
+            params = {
+                'username': username,
+                'limit': page_size,
+                'page': page,
+                'sort': 'Most Reactions',
+                'period': 'AllTime'
+            }
+            
+            if not include_nsfw:
+                params['nsfw'] = 'false'
+                add_log(f"NSFW filtering enabled: excluding NSFW content", 'INFO')
+            else:
+                add_log(f"NSFW filtering disabled: including all content", 'INFO')
+            
+            add_log(f"API request params: {params}", 'DEBUG')
+            add_log(f"Fetching page {page} (batch progress: {len(all_images)}/{batch_size})", 'INFO')
+            
+            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            items = data.get('items', [])
+            
+            # Debug: Check NSFW content in response
+            nsfw_count = sum(1 for item in items if item.get('nsfw', False))
+            total_count = len(items)
+            add_log(f"API response: {total_count} items, {nsfw_count} marked as NSFW", 'DEBUG')
+            
+            if not items:
+                add_log(f"No more items found on page {page}, stopping batch", 'INFO')
+                break
+            
+            # Process items from this page
+            for item in items:
+                if len(all_images) >= batch_size:
+                    break
+                
+                # Skip NSFW items if not including NSFW content
+                if not include_nsfw and item.get('nsfw', False):
+                    add_log(f"Skipping NSFW item {item.get('id', 'unknown')}", 'DEBUG')
+                    continue
+                
+                # Extract image data
+                image_url = item.get('url')
+                if not image_url:
+                    continue
+                
+                # Extract prompts from meta
+                meta = item.get('meta', {})
+                positive_prompt = ""
+                negative_prompt = ""
+                
+                if isinstance(meta, dict):
+                    positive_prompt = meta.get('prompt', '') or meta.get('positivePrompt', '')
+                    negative_prompt = meta.get('negativePrompt', '') or meta.get('negative', '')
+                elif isinstance(meta, str):
+                    try:
+                        meta_dict = json.loads(meta)
+                        positive_prompt = meta_dict.get('prompt', '') or meta_dict.get('positivePrompt', '')
+                        negative_prompt = meta_dict.get('negativePrompt', '') or meta.get('negative', '')
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Extract other metadata
+                created = item.get('createdAt', item.get('publishedAt', ''))
+                model_name = ""
+                if isinstance(meta, dict):
+                    model_name = meta.get('Model') or meta.get('model', '')
+                
+                all_images.append({
+                    'id': str(item.get('id', '')),
+                    'url': image_url,
+                    'title': item.get('name', 'Untitled'),
+                    'model': model_name,
+                    'created': created,
+                    'positive_prompt': positive_prompt.strip(),
+                    'negative_prompt': negative_prompt.strip(),
+                    'source': source
+                })
+            
+            add_log(f"Page {page} complete: {len(items)} items, batch total: {len(all_images)}", 'INFO')
+            
+            # If we got fewer items than requested, we've reached the end
+            if len(items) < page_size:
+                add_log(f"Reached end of available images on page {page}", 'INFO')
+                break
+            
+            page += 1
+            batch_count += 1
+            
+            # Add a small delay between pages to be respectful to the API
+            time.sleep(0.5)
+        
+        # Save progress state for resuming later
+        save_fetch_progress(username, page, len(all_images), batch_size, max_items)
+        
+        add_log(f"Batch complete: fetched {len(all_images)} images from {batch_count} pages", 'INFO')
+        add_log(f"NSFW filtering: {'disabled' if include_nsfw else 'enabled'} - excluded NSFW content", 'INFO')
+        add_log(f"Next batch will start from page {page}", 'INFO')
+        
+        return all_images
+        
+    except Exception as e:
+        add_log(f"Error during batch fetch: {e}", 'ERROR')
+        return []
+
+def save_fetch_progress(username, current_page, images_fetched, batch_size, total_target):
+    """Save progress state for resuming fetch later."""
+    try:
+        progress_file = os.path.join(os.getenv('OUT_DIR', '/output'), 'fetch_progress.json')
+        
+        # Load existing progress or create new
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r') as f:
+                progress = json.load(f)
+        else:
+            progress = {}
+        
+        # Update progress for this user
+        progress[username] = {
+            'last_page': current_page,
+            'images_fetched': images_fetched,
+            'batch_size': batch_size,
+            'total_target': total_target,
+            'last_updated': datetime.now().isoformat(),
+            'can_resume': True
+        }
+        
+        # Save progress
+        with open(progress_file, 'w') as f:
+            json.dump(progress, f, indent=2)
+        
+        # Set proper ownership
+        try:
+            # Use the actual UID/GID numbers for nobody:users (99:100)
+            uid = 99
+            gid = 100
+            os.chown(progress_file, uid, gid)
+            add_log(f"Set ownership of {progress_file} to UID {uid}, GID {gid}", 'DEBUG')
+        except OSError as e:
+            add_log(f"Could not set ownership of {progress_file}: {e}", 'WARNING')
+            
+        add_log(f"Progress saved: {username} at page {current_page}, {images_fetched} images fetched", 'INFO')
+        
+    except Exception as e:
+        add_log(f"Error saving progress: {e}", 'WARNING')
+
+def get_fetch_progress(username):
+    """Get saved progress for a user."""
+    try:
+        progress_file = os.path.join(os.getenv('OUT_DIR', '/output'), 'fetch_progress.json')
+        
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r') as f:
+                progress = json.load(f)
+                return progress.get(username, {})
+        
+        return {}
+        
+    except Exception as e:
+        add_log(f"Error loading progress: {e}", 'WARNING')
+        return {}
 
 @app.route('/')
 def index():
@@ -295,153 +543,196 @@ def run_command():
     """Handle form submission and start civiphrases command."""
     global job_state
     
-    if job_state['running']:
-        return jsonify({'error': 'A job is already running'}), 400
-    
-    # Clear previous logs
-    clear_logs()
-    
-    # Get form data
-    civitai_api_key = request.form.get('civitai_api_key', '').strip()
-    username = request.form.get('username', '').strip()
-    collection_url = request.form.get('collection_url', '').strip()
-    output_path = request.form.get('output_path', '/output').strip()
-    max_items = request.form.get('max_items', '200').strip()
-    include_nsfw = request.form.get('include_nsfw') == 'on'
-    tgw_base_url = request.form.get('tgw_base_url', 'http://127.0.0.1:5001/v1').strip()
-    tgw_api_key = request.form.get('tgw_api_key', 'local').strip()
-    selected_model = request.form.get('selected_model', '').strip()
-    
-    # Validate input
-    if not username and not collection_url:
-        return jsonify({'error': 'Either username or collection URL is required'}), 400
-    
-    if username and collection_url:
-        return jsonify({'error': 'Provide either username OR collection URL, not both'}), 400
-    
-    # Build command
-    command = ['python', '-m', 'civiphrases', 'refresh']
-    
-    if username:
-        command.extend(['--user', username])
-    elif collection_url:
-        command.extend(['--collection', collection_url])
-    
-    command.extend(['--max-items', max_items])
-    
-    if include_nsfw:
-        command.append('--include-nsfw')
-    
-    # Set up environment variables
-    env_vars = {
-        'OUT_DIR': output_path,
-        'TGW_BASE_URL': tgw_base_url,
-        'TGW_API_KEY': tgw_api_key,
-    }
-    
-    if civitai_api_key:
-        env_vars['CIVITAI_API_KEY'] = civitai_api_key
-    
-    # Add model selection if specified
-    if selected_model:
-        env_vars['TGW_MODEL_NAME'] = selected_model
-    
-    # Start command in background thread
-    thread = threading.Thread(target=run_civiphrases_command, args=(command, env_vars))
-    thread.daemon = True
-    thread.start()
-    
-    # Immediately fetch images from Civitai API using the working endpoint
-    # This ensures images display right away while civiphrases processes in background
     try:
+        logger.info("=== /run route called ===")
+        logger.info(f"Form data received: {dict(request.form)}")
+        
+        if job_state['running']:
+            logger.warning("Job already running, returning error")
+            return jsonify({'error': 'A job is already running'}), 400
+        
+        logger.info("Starting new job...")
+        
+        # Clear previous logs
+        clear_logs()
+        logger.info("Logs cleared successfully")
+        
+        # Get form data
+        civitai_api_key = request.form.get('civitai_api_key', '').strip()
+        username = request.form.get('username', '').strip()
+        collection_url = request.form.get('collection_url', '').strip()
+        output_path = request.form.get('output_path', '/output').strip()
+        max_items = request.form.get('max_items', '200').strip()
+        include_nsfw = request.form.get('include_nsfw') == 'on'
+        tgw_base_url = request.form.get('tgw_base_url', 'http://127.0.0.1:5001/v1').strip()
+        tgw_api_key = request.form.get('tgw_api_key', 'local').strip()
+        selected_model = request.form.get('selected_model', '').strip()
+        
+        logger.info("Form data extracted successfully")
+        
+        # Validate input
+        if not username and not collection_url:
+            logger.error("Validation failed: No username or collection URL")
+            return jsonify({'error': 'Either username or collection URL is required'}), 400
+        
+        if username and collection_url:
+            logger.error("Validation failed: Both username and collection URL provided")
+            return jsonify({'error': 'Provide either username OR collection URL, not both'}), 400
+        
+        logger.info("Form validation passed successfully")
+        
+        # Build command
+        command = ['python', '-m', 'civiphrases', 'refresh']
+        
         if username:
-            # Fetch images from user
-            source = f"user: {username}"
-            url = "https://civitai.com/api/v1/images"
-            params = {
-                'username': username,
-                'limit': min(100, int(max_items)),
-                'sort': 'Most Reactions',
-                'period': 'AllTime'
-            }
-            
-            if not include_nsfw:
-                params['nsfw'] = 'false'
-            
-            headers = {
-                'User-Agent': 'civiphrases-webui/1.0',
-                'Accept': 'application/json'
-            }
-            
-            if civitai_api_key:
-                headers['Authorization'] = f'Bearer {civitai_api_key}'
-            
-            response = requests.get(url, params=params, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            items = data.get('items', [])
-            
-            images = []
-            for item in items[:int(max_items)]:
-                # Extract image data
-                image_url = item.get('url')
-                if not image_url:
-                    continue
-                
-                # Extract prompts from meta
-                meta = item.get('meta', {})
-                positive_prompt = ""
-                negative_prompt = ""
-                
-                if isinstance(meta, dict):
-                    positive_prompt = meta.get('prompt', '') or meta.get('positivePrompt', '')
-                    negative_prompt = meta.get('negativePrompt', '') or meta.get('negative', '')
-                elif isinstance(meta, str):
-                    try:
-                        meta_dict = json.loads(meta)
-                        positive_prompt = meta_dict.get('prompt', '') or meta_dict.get('positivePrompt', '')
-                        negative_prompt = meta_dict.get('negativePrompt', '') or meta.get('negative', '')
-                    except json.JSONDecodeError:
-                        pass
-                
-                # Extract other metadata
-                created = item.get('createdAt', item.get('publishedAt', ''))
-                model_name = ""
-                if isinstance(meta, dict):
-                    model_name = meta.get('Model') or meta.get('model', '')
-                
-                images.append({
-                    'id': str(item.get('id', '')),
-                    'url': image_url,
-                    'title': item.get('name', 'Untitled'),
-                    'model': model_name,
-                    'created': created,
-                    'positive_prompt': positive_prompt.strip(),
-                    'negative_prompt': negative_prompt.strip(),
-                    'source': source
-                })
-            
-            # Update the global images state immediately
-            if images:
-                update_images_state(images, source)
-                add_log(f"Immediately fetched {len(images)} images from Civitai API", 'INFO')
-            else:
-                add_log("No images found from immediate Civitai API fetch", 'WARNING')
-                
+            command.extend(['--user', username])
         elif collection_url:
-            # Similar logic for collections
-            add_log("Collection fetching not yet implemented for immediate display", 'INFO')
-            
+            command.extend(['--collection', collection_url])
+        
+        command.extend(['--max-items', max_items])
+        
+        if include_nsfw:
+            command.append('--include-nsfw')
+        
+        logger.info(f"Command built successfully: {command}")
+        
+        # Set up environment variables
+        env_vars = {
+            'OUT_DIR': output_path,
+            'TGW_BASE_URL': tgw_base_url,
+            'TGW_API_KEY': tgw_api_key,
+        }
+        
+        if civitai_api_key:
+            env_vars['CIVITAI_API_KEY'] = civitai_api_key
+        
+        # Add model selection if specified
+        if selected_model:
+            env_vars['TGW_MODEL_NAME'] = selected_model
+        
+        logger.info(f"Environment variables set up successfully: {env_vars}")
+        
+        # Start command in background thread
+        logger.info(f"Starting background thread with command: {command}")
+        logger.info(f"Environment variables: {env_vars}")
+        
+        thread = threading.Thread(target=run_civiphrases_command, args=(command, env_vars))
+        thread.daemon = True
+        thread.start()
+        
+        logger.info("Background thread started successfully")
+        
+        # Immediately fetch images from Civitai API using the working endpoint
+        # This ensures images display right away while civiphrases processes in background
+        try:
+            if username:
+                # Check if we have existing progress for this user
+                progress = get_fetch_progress(username)
+                batch_size = 300  # Default: 300 images per batch (3 pages)
+                
+                if progress and progress.get('can_resume', False):
+                    # Resume from where we left off
+                    last_page = progress.get('last_page', 1)
+                    images_fetched = progress.get('images_fetched', 0)
+                    total_target = progress.get('total_target', int(max_items))
+                    
+                    add_log(f"Resuming fetch for {username} from page {last_page} (already have {images_fetched} images)", 'INFO')
+                    add_log(f"Target: {total_target} images, batch size: {batch_size}", 'INFO')
+                    
+                    # Use the new batch fetch function with resume
+                    images = fetch_images_with_pagination(
+                        username, total_target, include_nsfw, civitai_api_key, 
+                        batch_size=batch_size, resume_from_page=last_page
+                    )
+                else:
+                    # Start fresh batch
+                    add_log(f"Starting new batch fetch for {username}, batch size: {batch_size}", 'INFO')
+                    
+                    # Use the new batch fetch function
+                    images = fetch_images_with_pagination(
+                        username, int(max_items), include_nsfw, civitai_api_key, 
+                        batch_size=batch_size
+                    )
+                
+                # Update the global images state immediately
+                if images:
+                    source = f"user: {username}"
+                    update_images_state(images, source)
+                    add_log(f"Immediately fetched {len(images)} images from Civitai API with batch processing", 'INFO')
+                else:
+                    add_log("No images fetched from Civitai API", 'WARNING')
+                    
+            elif collection_url:
+                # For collections, we'll fetch a smaller batch for immediate display
+                add_log(f"Fetching collection images for immediate display: {collection_url}", 'INFO')
+                
+                # Extract collection ID from URL if needed
+                collection_id = collection_url
+                if 'civitai.com/collections/' in collection_url:
+                    collection_id = collection_url.split('collections/')[-1].split('?')[0]
+                
+                # Fetch a small batch for immediate display
+                images = fetch_images_with_pagination(
+                    collection_id, min(100, int(max_items)), include_nsfw, civitai_api_key, 
+                    batch_size=100, is_collection=True
+                )
+                
+                if images:
+                    source = f"collection: {collection_id}"
+                    update_images_state(images, source)
+                    add_log(f"Immediately fetched {len(images)} collection images from Civitai API", 'INFO')
+                else:
+                    add_log("No collection images fetched from Civitai API", 'WARNING')
+        
+        except Exception as e:
+            logger.error(f"Error fetching immediate images: {e}")
+            add_log(f"Error fetching immediate images: {e}", 'ERROR')
+        
+        logger.info("=== /run route completed successfully ===")
+        return jsonify({'success': True, 'message': 'Job started successfully'})
+        
     except Exception as e:
-        add_log(f"Could not immediately fetch images: {e}", 'WARNING')
-    
-    return redirect(url_for('index'))
+        logger.error(f"=== /run route failed with exception: {e} ===")
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception traceback: {traceback.format_exc()}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/status')
 def get_status():
     """Get current job status and logs via AJAX."""
-    return jsonify(job_state)
+    global job_state
+    
+    # Use lock for thread-safe access
+    with job_state_lock:
+        # Debug: Log the current job_state before fixing
+        logger.info(f"Status endpoint called. Current job_state keys: {list(job_state.keys())}")
+        logger.info(f"Current job_state values: {job_state}")
+        
+        # Ensure all required fields are present
+        if 'running' not in job_state:
+            logger.warning("Missing 'running' field in job_state, adding it")
+            job_state['running'] = False
+        if 'success' not in job_state:
+            logger.warning("Missing 'success' field in job_state, adding it")
+            job_state['success'] = None
+        if 'logs' not in job_state:
+            logger.warning("Missing 'logs' field in job_state, adding it")
+            job_state['logs'] = []
+        if 'start_time' not in job_state:
+            logger.warning("Missing 'start_time' field in job_state, adding it")
+            job_state['start_time'] = None
+        if 'end_time' not in job_state:
+            logger.warning("Missing 'end_time' field in job_state, adding it")
+            job_state['end_time'] = None
+        if 'command' not in job_state:
+            logger.warning("Missing 'command' field in job_state, adding it")
+            job_state['command'] = None
+        
+        # Debug: Log the job_state after fixing
+        logger.info(f"Status endpoint returning job_state: {job_state}")
+        
+        # Return a copy to avoid any potential issues
+        return jsonify(dict(job_state))
 
 @app.route('/clear')
 def clear_job():
@@ -662,6 +953,47 @@ def debug_civiphrases_state():
             'traceback': str(e.__traceback__)
         })
 
+@app.route('/debug/job_state')
+def debug_job_state():
+    """Debug endpoint to inspect the current job state."""
+    global job_state
+    
+    # Use lock for thread-safe access
+    with job_state_lock:
+        # Debug: Log the current job_state before fixing
+        logger.info(f"Debug endpoint called. Current job_state keys: {list(job_state.keys())}")
+        logger.info(f"Current job_state values: {job_state}")
+        
+        # Ensure all required fields are present
+        if 'running' not in job_state:
+            logger.warning("Missing 'running' field in job_state, adding it")
+            job_state['running'] = False
+        if 'success' not in job_state:
+            logger.warning("Missing 'success' field in job_state, adding it")
+            job_state['success'] = None
+        if 'logs' not in job_state:
+            logger.warning("Missing 'logs' field in job_state, adding it")
+            job_state['logs'] = []
+        if 'start_time' not in job_state:
+            logger.warning("Missing 'start_time' field in job_state, adding it")
+            job_state['start_time'] = None
+        if 'end_time' not in job_state:
+            logger.warning("Missing 'end_time' field in job_state, adding it")
+            job_state['end_time'] = None
+        if 'command' not in job_state:
+            logger.warning("Missing 'command' field in job_state, adding it")
+            job_state['command'] = None
+        
+        # Debug: Log the job_state after fixing
+        logger.info(f"Debug endpoint returning job_state: {job_state}")
+        
+        # Return a copy to avoid any potential issues
+        return jsonify({
+            'job_state': dict(job_state),
+            'images_state': images_state,
+            'timestamp': datetime.now().isoformat()
+        })
+
 @app.route('/validate_api_key', methods=['POST'])
 def validate_api_key():
     """Validate Civitai API key and return username."""
@@ -730,13 +1062,25 @@ def fetch_civitai_images():
             if not include_nsfw:
                 params['nsfw'] = 'false'
             
+            add_log(f"Fetching images for user {username} with NSFW filtering: {'disabled' if include_nsfw else 'enabled'}", 'INFO')
+            add_log(f"API request params: {params}", 'DEBUG')
+            
             response = requests.get(url, params=params, headers=headers, timeout=30)
             response.raise_for_status()
             
             data = response.json()
             items = data.get('items', [])
             
+            # Debug: Check NSFW content in response
+            nsfw_count = sum(1 for item in items if item.get('nsfw', False))
+            total_count = len(items)
+            add_log(f"API response: {total_count} items, {nsfw_count} marked as NSFW", 'DEBUG')
+            
             for item in items[:max_items]:
+                # Skip NSFW items if not including NSFW content
+                if not include_nsfw and item.get('nsfw', False):
+                    continue
+                
                 # Extract image data
                 image_url = item.get('url')
                 if not image_url:
@@ -802,9 +1146,19 @@ def fetch_civitai_images():
             data = response.json()
             items = data.get('items', [])
             
+            # Debug: Check NSFW content in response
+            nsfw_count = sum(1 for item in items if item.get('data', {}).get('nsfw', False))
+            total_count = len(items)
+            add_log(f"Collection API response: {total_count} items, {nsfw_count} marked as NSFW", 'DEBUG')
+            
             for item in items[:max_items]:
                 # Extract the actual image data
                 image_data = item.get('data', item)
+                
+                # Skip NSFW items if not including NSFW content
+                if not include_nsfw and image_data.get('nsfw', False):
+                    continue
+                
                 image_url = image_data.get('url')
                 if not image_url:
                     continue
@@ -845,13 +1199,15 @@ def fetch_civitai_images():
         # Update the global images state
         if images:
             update_images_state(images, source)
-            logger.info(f"Successfully fetched {len(images)} images from {source}")
+            add_log(f"Successfully fetched {len(images)} images from {source}", 'INFO')
+            add_log(f"NSFW filtering: {'disabled' if include_nsfw else 'enabled'} - excluded NSFW content", 'INFO')
         
         return jsonify({
             'success': True,
             'images': images,
+            'count': len(images),
             'source': source,
-            'count': len(images)
+            'nsfw_filtering': 'disabled' if include_nsfw else 'enabled'
         })
         
     except requests.exceptions.RequestException as e:
@@ -860,6 +1216,68 @@ def fetch_civitai_images():
     except Exception as e:
         logger.error(f"Error fetching images: {e}")
         return jsonify({'success': False, 'error': f'Error: {str(e)}'})
+
+@app.route('/continue_fetch', methods=['POST'])
+def continue_fetch():
+    """Continue fetching more images for a user from where we left off."""
+    try:
+        data = request.json
+        username = data.get('username', '').strip()
+        batch_size = int(data.get('batch_size', 300))
+        
+        if not username:
+            return jsonify({'success': False, 'error': 'Username is required'})
+        
+        # Get current progress
+        progress = get_fetch_progress(username)
+        if not progress or not progress.get('can_resume', False):
+            return jsonify({'success': False, 'error': 'No progress found for this user'})
+        
+        # Get API key from environment or request
+        civitai_api_key = os.getenv('CIVITAI_API_KEY', '')
+        include_nsfw = True  # Default to True for continuation
+        
+        # Continue fetching from last page
+        images = fetch_images_with_pagination(
+            username, progress['total_target'], include_nsfw, civitai_api_key,
+            batch_size=batch_size, resume_from_page=progress['last_page']
+        )
+        
+        if images:
+            # Update the global images state
+            source = f"user: {username}"
+            update_images_state(images, source)
+            
+            return jsonify({
+                'success': True,
+                'images': images,
+                'count': len(images),
+                'source': source,
+                'message': f'Fetched {len(images)} more images from page {progress["last_page"]}'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'No more images found'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/fetch_progress/<username>')
+def get_user_progress(username):
+    """Get current fetch progress for a specific user."""
+    try:
+        progress = get_fetch_progress(username)
+        if progress:
+            return jsonify({
+                'success': True,
+                'progress': progress
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'No progress found for this user'
+            })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/detect_loaded_model', methods=['POST'])
 def detect_loaded_model():

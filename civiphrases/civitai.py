@@ -114,12 +114,32 @@ class CivitaiClient:
                 if key in meta:
                     metadata[key] = meta[key]
         
+        # Extract image data for display
+        image_data = {}
+        if "url" in item:
+            image_data["url"] = item["url"]
+        elif "data" in item and isinstance(item["data"], dict) and "url" in item["data"]:
+            image_data["url"] = item["data"]["url"]
+        
+        # Extract title/name
+        image_data["title"] = item.get("name", item.get("title", ""))
+        
+        # Extract model information
+        model_name = ""
+        if isinstance(meta, dict):
+            model_name = meta.get("Model") or meta.get("model", "")
+        image_data["model"] = model_name
+        
+        # Extract creation date
+        image_data["created"] = created
+        
         return {
             "item_id": item_id,
             "positive": str(positive).strip(),
             "negative": str(negative).strip(),
             "created": created,
             "meta": metadata,
+            "image_data": image_data,  # New field for image display
         }
     
     def fetch_user_images(
@@ -286,6 +306,17 @@ def save_items_incrementally(items_file: str, new_items: List[Dict]):
         with open(items_file, 'a', encoding='utf-8') as f:
             for item in new_items:
                 f.write(json.dumps(item, ensure_ascii=False) + '\n')
+        
+        # Set proper ownership after writing
+        try:
+            # Use the actual UID/GID numbers for nobody:users (99:100)
+            uid = 99
+            gid = 100
+            os.chown(items_file, uid, gid)
+        except OSError:
+            # Log but don't fail if we can't set ownership
+            pass
+            
     except IOError as e:
         logger.error(f"Error saving items: {e}")
 

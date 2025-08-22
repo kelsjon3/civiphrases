@@ -1,11 +1,11 @@
 """Wildcard file writer and manifest generation for ComfyUI Dynamic Prompts."""
 
+import os
 import json
 import logging
-import os
-from datetime import datetime
 from collections import defaultdict, Counter
-from typing import List, Dict, Any, Set
+from datetime import datetime
+from typing import List, Dict, Any
 
 from .config import config
 
@@ -134,6 +134,7 @@ class WildcardWriter:
             with open(config.phrases_file, 'w', encoding='utf-8') as f:
                 for phrase in phrases:
                     f.write(json.dumps(phrase, ensure_ascii=False) + '\n')
+            
             logger.info(f"Saved {len(phrases)} phrases to {config.phrases_file}")
         except IOError as e:
             logger.error(f"Error saving phrases state: {e}")
@@ -165,7 +166,11 @@ class WildcardWriter:
         Returns:
             Dictionary with counts per category
         """
+        logger.info("=== Starting write_wildcard_files ===")
+        logger.info(f"Processing {len(phrases)} phrases")
+        
         # Group phrases by category
+        logger.info("Grouping phrases by category...")
         category_phrases = defaultdict(list)
         
         for phrase in phrases:
@@ -173,10 +178,13 @@ class WildcardWriter:
             if category in self.WILDCARD_FILES:
                 category_phrases[category].append(phrase["text"])
         
+        logger.info(f"Grouped into {len(category_phrases)} categories")
         counts = {}
         
         # Write individual category files
+        logger.info("Writing individual category files...")
         for category, filename in self.WILDCARD_FILES.items():
+            logger.info(f"Writing {category} to {filename}...")
             file_path = os.path.join(config.wildcards_dir, filename)
             phrase_list = category_phrases[category]
             
@@ -184,9 +192,12 @@ class WildcardWriter:
             phrase_list.sort()
             
             try:
+                logger.info(f"Opening {file_path} for writing...")
                 with open(file_path, 'w', encoding='utf-8') as f:
                     for phrase in phrase_list:
                         f.write(phrase + '\n')
+                
+                logger.info(f"File written successfully")
                 
                 counts[category] = len(phrase_list)
                 logger.info(f"Wrote {len(phrase_list)} phrases to {filename}")
@@ -196,6 +207,7 @@ class WildcardWriter:
                 counts[category] = 0
         
         # Write prompt_bank.txt (union of all non-negative phrases)
+        logger.info("Writing prompt_bank.txt...")
         prompt_bank_phrases = []
         for phrase in phrases:
             if phrase["category"] != "negatives":
@@ -205,9 +217,12 @@ class WildcardWriter:
         prompt_bank_path = os.path.join(config.wildcards_dir, "prompt_bank.txt")
         
         try:
+            logger.info(f"Opening {prompt_bank_path} for writing...")
             with open(prompt_bank_path, 'w', encoding='utf-8') as f:
                 for phrase in prompt_bank_phrases:
                     f.write(phrase + '\n')
+            
+            logger.info("File written successfully")
             
             counts["prompt_bank"] = len(prompt_bank_phrases)
             logger.info(f"Wrote {len(prompt_bank_phrases)} phrases to prompt_bank.txt")
@@ -216,6 +231,7 @@ class WildcardWriter:
             logger.error(f"Error writing prompt_bank.txt: {e}")
             counts["prompt_bank"] = 0
         
+        logger.info("=== write_wildcard_files completed successfully ===")
         return counts
     
     def create_manifest(
@@ -258,6 +274,7 @@ class WildcardWriter:
         try:
             with open(config.manifest_file, 'w', encoding='utf-8') as f:
                 json.dump(manifest, f, indent=2, ensure_ascii=False)
+            
             logger.info(f"Created manifest at {config.manifest_file}")
         except IOError as e:
             logger.error(f"Error creating manifest: {e}")
@@ -287,21 +304,35 @@ def process_and_write_phrases(
     Returns:
         Dictionary with phrase counts by category
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=== Starting process_and_write_phrases ===")
+    
     writer = WildcardWriter()
     
     # Deduplicate and process phrases
+    logger.info("Deduplicating phrases...")
     deduped_phrases = writer.dedupe_phrases(classified_phrases)
+    logger.info(f"Deduplication complete: {len(deduped_phrases)} phrases")
     
     # Apply quality filtering if requested
+    logger.info("Applying quality filtering...")
     filtered_phrases = writer.apply_quality_filter(deduped_phrases, remove_generic_quality)
+    logger.info(f"Quality filtering complete: {len(filtered_phrases)} phrases")
     
     # Save phrases state
+    logger.info("Saving phrases state...")
     writer.save_phrases_state(filtered_phrases)
+    logger.info("Phrases state saved")
     
     # Write wildcard files
+    logger.info("Writing wildcard files...")
     phrase_counts = writer.write_wildcard_files(filtered_phrases)
+    logger.info(f"Wildcard files written: {phrase_counts}")
     
     # Create manifest
+    logger.info("Creating manifest...")
     writer.create_manifest(
         source_info=source_info,
         phrase_counts=phrase_counts,
@@ -310,7 +341,9 @@ def process_and_write_phrases(
         model_name=model_name,
         config_used=config_used
     )
+    logger.info("Manifest created")
     
+    logger.info("=== process_and_write_phrases completed successfully ===")
     return phrase_counts
 
 

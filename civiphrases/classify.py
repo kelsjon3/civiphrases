@@ -70,7 +70,8 @@ Rules:
         """Initialize the LLM classifier."""
         self.client = OpenAI(
             base_url=config.tgw_base_url,
-            api_key=config.tgw_api_key
+            api_key=config.tgw_api_key,
+            timeout=120.0  # 2 minute timeout to prevent hanging requests
         )
         
         # Test connection and get model info
@@ -326,7 +327,8 @@ Rules:
                 # TGW-specific parameters to improve response quality
                 top_p=0.9,
                 frequency_penalty=0.1,
-                presence_penalty=0.1
+                presence_penalty=0.1,
+                timeout=120  # 2 minute timeout to prevent hanging
             )
             
             response_text = response.choices[0].message.content
@@ -376,6 +378,14 @@ Rules:
                 
         except Exception as e:
             logger.error(f"Error during LLM classification: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            
+            # Check for specific timeout-related errors
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                logger.error("LLM request timed out - this may indicate the model is hanging")
+            elif "connection" in str(e).lower():
+                logger.error("Connection error - check if TGW is responsive")
+            
             return []
     
     def classify_worklist(

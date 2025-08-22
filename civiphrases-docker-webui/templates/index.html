@@ -166,9 +166,58 @@
         
         .no-images {
             text-align: center;
-            padding: 40px 20px;
-            color: #6c757d;
-            font-style: italic;
+            padding: 40px;
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .pagination-info {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #1976d2;
+            font-weight: 500;
+            font-size: 1.1em;
+        }
+        
+        .fetch-progress {
+            background: #f3e5f5;
+            border: 1px solid #9c27b0;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        
+        .progress-info {
+            color: #7b1fa2;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            border-color: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+            border-color: #1e7e34;
+        }
+        
+        .btn-info {
+            background: #17a2b8;
+            border-color: #17a2b8;
+            color: white;
+        }
+        
+        .btn-info:hover {
+            background: #138496;
+            border-color: #117a8b;
         }
         
         .loading-images {
@@ -502,7 +551,7 @@
                     <div class="form-group">
                         <div class="checkbox-group">
                             <input type="checkbox" id="include_nsfw" name="include_nsfw">
-                            <label for="include_nsfw">Include NSFW Content</label>
+                            <label for="include_nsfw">Exclude NSFW Content</label>
                         </div>
                     </div>
                     
@@ -522,12 +571,14 @@
                     <h3>🎨 Civitai Images</h3>
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <span class="images-count" id="images-count">No images loaded</span>
-                        <button type="button" class="btn btn-primary" onclick="fetchCivitaiImages()" style="padding: 6px 12px; font-size: 12px;">
-                            📥 Fetch Images
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="loadImages()" style="padding: 6px 12px; font-size: 12px;">
-                            🔄 Refresh Display
-                        </button>
+                        <div class="action-buttons">
+                            <button id="continue-fetch" class="btn btn-success" style="display: none;">
+                                <i class="fas fa-play"></i> Continue Fetch
+                            </button>
+                            <button id="debug-status" class="btn btn-info" onclick="debugJobState()">
+                                <i class="fas fa-bug"></i> Debug Status
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="image-grid" id="image-grid">
@@ -536,6 +587,12 @@
                         <p style="font-size: 12px; margin-top: 10px; opacity: 0.7;">
                             Images will appear here with their prompts displayed below
                         </p>
+                    </div>
+                </div>
+                
+                <div id="fetch-progress" class="fetch-progress" style="display: none;">
+                    <div class="progress-info">
+                        <span id="progress-text">Ready to fetch images</span>
                     </div>
                 </div>
             </div>
@@ -732,26 +789,32 @@
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
+                    console.log('Status update received:', data);
+                    
                     // Update status indicator
                     const statusEl = document.querySelector('.status-indicator');
                     if (statusEl) {
                         statusEl.className = 'status-indicator ';
                         
-                        if (data.running) {
+                        if (data.running === true) {
                             statusEl.className += 'status-running';
                             statusEl.innerHTML = '🔄 Job Running...';
-                        } else if (data.success === true) {
+                        } else if (data.running === false && data.success === true) {
                             statusEl.className += 'status-success';
                             statusEl.innerHTML = '✅ Job Completed Successfully';
                             
                             // Don't auto-refresh images when job completes - keep current images
                             // The images are already displayed and working
-                        } else if (data.success === false) {
+                        } else if (data.running === false && data.success === false) {
                             statusEl.className += 'status-error';
                             statusEl.innerHTML = '❌ Job Failed';
-                        } else {
+                        } else if (data.running === false && data.success === null) {
                             statusEl.className += 'status-idle';
                             statusEl.innerHTML = '💤 Ready to Run';
+                        } else {
+                            // Fallback for unexpected states
+                            statusEl.className += 'status-idle';
+                            statusEl.innerHTML = `💤 Status: running=${data.running}, success=${data.success}`;
                         }
                     }
                     
@@ -1078,17 +1141,21 @@
         
         // Form validation
         document.getElementById('civiphrases-form').addEventListener('submit', function(e) {
+            e.preventDefault(); // Prevent form from navigating away
+            
             const username = document.getElementById('username').value.trim();
             const collectionUrl = document.getElementById('collection_url').value.trim();
             
+            console.log('Form submission triggered');
+            console.log('Username:', username);
+            console.log('Collection URL:', collectionUrl);
+            
             if (!username && !collectionUrl) {
-                e.preventDefault();
                 alert('Please provide either a username or collection URL.');
                 return;
             }
             
             if (username && collectionUrl) {
-                e.preventDefault();
                 alert('Please provide either username OR collection URL, not both.');
                 return;
             }
@@ -1096,8 +1163,31 @@
             // Save form data before submit
             saveFormData();
             
-            // Fetch images immediately after form submission
-            setTimeout(fetchCivitaiImages, 1000);
+            console.log('Form validation passed, submitting to /run via fetch');
+            
+            // Submit form data via fetch instead of normal form submission
+            const formData = new FormData(this);
+            
+            fetch('/run', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Response from /run:', data);
+                if (data.success) {
+                    // Job started successfully, refresh status to show "Running..."
+                    refreshStatus();
+                    // Fetch images after a delay for immediate display
+                    setTimeout(fetchCivitaiImages, 1000);
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error submitting form:', error);
+                alert('Error submitting form: ' + error.message);
+            });
         });
             
             // Clear the other field when one is filled
@@ -1140,11 +1230,24 @@
                 
                 if (data.success && data.images && data.images.length > 0) {
                     console.log(`Displaying ${data.images.length} images`);
+                    
+                    // Show pagination progress if available
+                    let progressInfo = '';
+                    if (data.source && data.source.includes('civitai_api')) {
+                        progressInfo = `<div class="pagination-info">📥 Fetched ${data.count} images from Civitai API</div>`;
+                        
+                        // Update progress display if we have a username
+                        const username = document.getElementById('username').value.trim();
+                        if (username) {
+                            updateProgressDisplay(username);
+                        }
+                    }
+                    
                     // Display images
                     const imageHtml = data.images.map(image => `
                         <div class="image-card">
                             <img src="${image.url}" alt="${image.title || 'Civitai Image'}" 
-                                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Vucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlPC90ZXh0Pjwvc3ZnPg=='">
+                                 onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlPC90ZXh0Pjwvc3ZnPg=='">
                             <div class="image-info">
                                 <div class="image-title">${image.title || 'Untitled'}</div>
                                 <div class="image-meta">
@@ -1167,7 +1270,7 @@
                         </div>
                     `).join('');
                     
-                    imageGrid.innerHTML = imageHtml;
+                    imageGrid.innerHTML = progressInfo + imageHtml;
                     imagesCount.textContent = `${data.images.length} images loaded`;
                 } else {
                     console.log('No images found:', data.message);
@@ -1249,10 +1352,89 @@
             loadImages();
         });
         
-        // Add manual refresh button functionality
-        document.getElementById('refresh-display').addEventListener('click', function() {
-            loadImages();
+        // Add continue fetch button functionality
+        document.getElementById('continue-fetch').addEventListener('click', function() {
+            continueFetch();
         });
+        
+        // Function to continue fetching more images
+        async function continueFetch() {
+            const username = document.getElementById('username').value.trim();
+            if (!username) {
+                alert('Please enter a username first');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/continue_fetch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        batch_size: 300
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log(`Successfully fetched ${data.count} more images`);
+                    loadImages(); // Refresh the display
+                    updateProgressDisplay(username); // Update progress info
+                } else {
+                    console.error('Failed to continue fetch:', data.error);
+                    alert(`Failed to continue fetch: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error continuing fetch:', error);
+                alert(`Error continuing fetch: ${error.message}`);
+            }
+        }
+        
+        // Function to update progress display
+        async function updateProgressDisplay(username) {
+            try {
+                const response = await fetch(`/fetch_progress/${username}`);
+                const data = await response.json();
+                
+                const progressDiv = document.getElementById('fetch-progress');
+                const progressText = document.getElementById('progress-text');
+                const continueBtn = document.getElementById('continue-fetch');
+                
+                if (data.success && data.progress) {
+                    const progress = data.progress;
+                    progressDiv.style.display = 'block';
+                    continueBtn.style.display = 'inline-block';
+                    
+                    progressText.innerHTML = `
+                        📊 Progress: ${progress.images_fetched} images fetched from ${progress.last_page - 1} pages<br>
+                        🎯 Target: ${progress.total_target} images<br>
+                        📄 Next batch starts from page ${progress.last_page}<br>
+                        ⏰ Last updated: ${new Date(progress.last_updated).toLocaleString()}
+                    `;
+                } else {
+                    progressDiv.style.display = 'none';
+                    continueBtn.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error updating progress:', error);
+            }
+        }
+
+        // Debug function to manually check job state
+        async function debugJobState() {
+            try {
+                const response = await fetch('/debug/job_state');
+                const data = await response.json();
+                console.log('Debug Job State:', data);
+                alert(`Debug Job State:\n\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                console.error('Error fetching debug status:', error);
+                alert('Failed to fetch debug status.');
+            }
+        }
     </script>
 </body>
 </html>
